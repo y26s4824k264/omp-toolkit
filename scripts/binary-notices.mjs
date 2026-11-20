@@ -223,8 +223,9 @@ function main() {
   }
   const upstream = realpathSync(values.upstream);
   const bySource = new Map([
-    ["toolkit", toolkit],
+    // CI checks out the upstream project inside the toolkit's target directory.
     ["oh-my-pi", upstream],
+    ["toolkit", toolkit],
   ]);
   const artifacts = [
     ...pathsFromBuild(values["toolkit-build"], ["omp-refactor", "omp-toolkit-mcp"]),
