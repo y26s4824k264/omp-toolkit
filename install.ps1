@@ -31,7 +31,7 @@ if ($env:OS -ne 'Windows_NT') {
     throw 'Use install.sh on macOS or Linux.'
 }
 
-$repo = 'y26s4824k264/omp-codex-toolkit'
+$repo = 'y26s4824k264/omp-toolkit'
 $nodeVersion = 'v24.22.3'
 $releaseTagPattern = '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
 if ($Version -cne 'latest' -and $Version -cnotmatch $releaseTagPattern) {

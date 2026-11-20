@@ -30,7 +30,7 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(50);
 
 #[derive(Parser)]
 #[command(
-    name = "omp-codex-mcp",
+    name = "omp-toolkit-mcp",
     version,
     about = "Serve the local OMP editing and inspection tools over MCP"
 )]
@@ -371,7 +371,7 @@ impl OmpTools {
 impl ServerHandler for OmpTools {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("omp-codex-mcp", env!("CARGO_PKG_VERSION")))
+            .with_server_info(Implementation::new("omp-toolkit-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Use the saved full patch from preview tools. Inspect it and run git apply --check in the project before applying it.",
             )

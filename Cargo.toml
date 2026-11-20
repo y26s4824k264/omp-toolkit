@@ -5,14 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Standalone Oh My Pi editing tools and stdio MCP adapter for Codex"
-repository = "https://github.com/y26s4824k264/omp-codex-toolkit"
+repository = "https://github.com/y26s4824k264/omp-toolkit"
 
 [[bin]]
 name = "omp-refactor"
 path = "src/main.rs"
 
 [[bin]]
-name = "omp-codex-mcp"
+name = "omp-toolkit-mcp"
 path = "src/mcp.rs"
 
 [dependencies]

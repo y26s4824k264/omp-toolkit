@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo=y26s4824k264/omp-codex-toolkit
+repo=y26s4824k264/omp-toolkit
 node_version=v24.22.3
 version=latest
 prefix=

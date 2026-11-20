@@ -227,7 +227,7 @@ function main() {
     ["oh-my-pi", upstream],
   ]);
   const artifacts = [
-    ...pathsFromBuild(values["toolkit-build"], ["omp-refactor", "omp-codex-mcp"]),
+    ...pathsFromBuild(values["toolkit-build"], ["omp-refactor", "omp-toolkit-mcp"]),
     ...pathsFromBuild(values["shell-build"], ["omp_shell_cli", "obash"]),
   ];
   const manifests = new Map(artifacts.map((artifact) => [artifact.manifest_path, artifact]));

@@ -1,4 +1,4 @@
-# OMP Codex Toolkit
+# OMP Toolkit
 
 English · [简体中文](README.zh-CN.md)
 
@@ -8,32 +8,32 @@ The toolkit uses [Oh My Pi v19.0.0](https://github.com/can1357/oh-my-pi/tree/v19
 
 ## Install
 
-Download and run the script for your system from [GitHub Releases](https://github.com/y26s4824k264/omp-codex-toolkit/releases/latest). The installer selects the release archive for your architecture and checks its SHA-256 digest. It reuses Node.js 24+ and Oh My Pi 19.0.0 when available or downloads and verifies them from upstream. Install Git to apply patches and run Git-dependent commands.
+Download and run the script for your system from [GitHub Releases](https://github.com/y26s4824k264/omp-toolkit/releases/latest). The installer selects the release archive for your architecture and checks its SHA-256 digest. It reuses Node.js 24+ and Oh My Pi 19.0.0 when available or downloads and verifies them from upstream. Install Git to apply patches and run Git-dependent commands.
 
 You can also give your coding agent this instruction.
 
-> Install OMP Codex Toolkit using the installer for this system. Connect its local MCP tools to this agent and verify that `ast_find` is available. https://github.com/y26s4824k264/omp-codex-toolkit
+> Install OMP Toolkit using the installer for this system. Connect its local MCP tools to this agent and verify that `ast_find` is available. https://github.com/y26s4824k264/omp-toolkit
 
 **macOS and Linux**
 
 ```sh
-curl -fsSLo install.sh https://github.com/y26s4824k264/omp-codex-toolkit/releases/latest/download/install.sh && bash install.sh
+curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.sh && bash install.sh
 ```
 
-The default install directory is `$HOME/.local/omp-codex-toolkit`. Use `--prefix DIR` for a custom directory, `--version v0.2.0` to pin the release, and `--omp-bin FILE` to choose an existing Oh My Pi 19.0.0 executable. To install the optional language servers, first put Node.js 24+ with npm on `PATH`, then pass `--with-lsp-servers`.
+The default install directory is `$HOME/.local/omp-toolkit`. Use `--prefix DIR` for a custom directory, `--version v0.2.0` to pin the release, and `--omp-bin FILE` to choose an existing Oh My Pi 19.0.0 executable. To install the optional language servers, first put Node.js 24+ with npm on `PATH`, then pass `--with-lsp-servers`.
 
 **Windows PowerShell 5.1 or later**
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-codex-toolkit/releases/latest/download/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.ps1 -OutFile install.ps1
 & .\install.ps1
 ```
 
-The default install directory is `%LOCALAPPDATA%\OMP Codex Toolkit`. The options include `-Prefix DIR`, `-Version v0.2.0`, `-OmpBin FILE`, and `-WithLspServers`. If machine policy restricts downloaded PowerShell scripts, follow your machine's or organization's process to review and allow the script.
+The default install directory is `%LOCALAPPDATA%\OMP Toolkit`. The options include `-Prefix DIR`, `-Version v0.2.0`, `-OmpBin FILE`, and `-WithLspServers`. If machine policy restricts downloaded PowerShell scripts, follow your machine's or organization's process to review and allow the script.
 
 The installer detects accessible local Codex and Claude Code CLIs and adds the MCP entry to each detected client. Existing `omp` entries stay in place. Use `--client none` on macOS/Linux or `-Client none` on Windows to install the binaries and configuration files only. To target one client, pass `codex` or `claude` to the same option. Use the printed command to add the toolkit's `bin` directory to your current terminal's `PATH`.
 
-For a `v0.1.0` source installation in the default directory, choose a separate `--prefix` for the new package. To switch clients to the new installation, replace the previous `omp` entry with the new one. If the installer cannot configure a client, it prints the command to run in your terminal.
+The new default install directory is separate from the `v0.1.0` source installation. To switch clients to the new installation, replace the previous `omp` entry with the new one. If the installer cannot configure a client, it prints the command to run in your terminal.
 
 ### Platforms and features
 
@@ -49,7 +49,7 @@ Prebuilt macOS packages use the system `open` command for opening files and URLs
 
 | Command | Purpose |
 | --- | --- |
-| `omp-codex-mcp` | 10 stdio MCP tools for AST, Hashline, logs, service readiness, and performance reports |
+| `omp-toolkit-mcp` | 10 stdio MCP tools for AST, Hashline, logs, service readiness, and performance reports |
 | `omp-refactor` | Structural search, patch previews, and source summaries |
 | `omp-shell`, `obash` | Shell execution, log summaries, and Bash parsing |
 | `omp-lsp` | Diagnostics, navigation, and semantic rename previews |
@@ -111,8 +111,8 @@ Run `omp-refactor hashline --patch edits.txt src/a.ts` to generate a Git patch. 
 On macOS or Linux, you can use the source installer with [Oh My Pi 19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0#install). You need Git, Rustup, system build tools, and Node.js 24+. Optional language servers also require npm.
 
 ```sh
-git clone https://github.com/y26s4824k264/omp-codex-toolkit.git
-cd omp-codex-toolkit
+git clone https://github.com/y26s4824k264/omp-toolkit.git
+cd omp-toolkit
 ./scripts/install.sh --with-lsp-servers
 ```
 
@@ -168,7 +168,7 @@ Install `target/ci/examples/omp_shell_cli` as `omp-shell`. The upstream `obash` 
 
 ## MCP tools
 
-The stdio entry point is `omp-codex-mcp`. In Codex, look for the `mcp__omp__` tools. In other clients, find the `omp` server. Use an absolute project directory for `root` and paths within that directory for `file`, `files`, and `log`.
+The stdio entry point is `omp-toolkit-mcp`. In Codex, look for the `mcp__omp__` tools. In other clients, find the `omp` server. Use an absolute project directory for `root` and paths within that directory for `file`, `files`, and `log`.
 
 | Tool | Purpose | JSON fields |
 | --- | --- | --- |
@@ -191,11 +191,11 @@ To inspect repeated calls first, call `ast_find`.
 
 For lengthy results, read the needed fields from the returned `Full JSON` path. `ast_preview` and `hashline_preview` return a `Full patch` path. Inspect the complete patch, run `git apply --check -- "$patch"` from the project root, then run `git apply -- "$patch"`. Preview again if the source changes. Failed logs and logs larger than 4 MiB use a head and tail excerpt. Other logs go through OMP's command-aware filter.
 
-The equivalent terminal tools are `omp-refactor ast-find`, `ast`, `read-summary`, `read`, and `hashline`. Use `obash --json=native -c '…'` to parse Bash, `omp-shell minimize` to summarize a log, and `omp toks FILE --json` to estimate tokens. To register a manual source build with Codex, use absolute paths.
+The equivalent terminal tools are `omp-refactor ast-find`, `ast`, `read-summary`, `read`, and `hashline`. Use `obash --json=native -c '…'` to parse Bash, `omp-shell minimize` to summarize a log, and `omp toks FILE --json` to estimate tokens. To connect a manual source build to Codex, use absolute paths.
 
 ```sh
-cargo build --release --locked -p omp-refactor --bin omp-codex-mcp
-codex mcp add omp -- /absolute/path/to/omp-codex-mcp \
+cargo build --release --locked -p omp-refactor --bin omp-toolkit-mcp
+codex mcp add omp -- /absolute/path/to/omp-toolkit-mcp \
   --bin-dir /absolute/directory/with/native-tools --omp /absolute/path/to/omp \
   --node /absolute/path/to/node --profile-helper /absolute/path/to/profile/summary.mjs
 ```

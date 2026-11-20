@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const windows = process.platform === 'win32';
 const suffix = windows ? '.exe' : '';
-const asset = `omp-codex-toolkit-${process.platform}-${process.arch}.${windows ? 'zip' : 'tar.gz'}`;
+const asset = `omp-toolkit-${process.platform}-${process.arch}.${windows ? 'zip' : 'tar.gz'}`;
 const archive = join(repo, 'target', 'distribution', asset);
 const version = /^version = "([^"]+)"/m.exec(readFileSync(join(repo, 'Cargo.toml'), 'utf8'))[1];
 const temp = realpathSync(mkdtempSync(join(tmpdir(), 'omp-release-')));
@@ -35,7 +35,7 @@ function launchInstalled(name, args) {
 }
 
 async function smokeMcp(config) {
-    assert.equal(config.command, join(prefix, 'bin', 'omp-codex-mcp' + suffix));
+    assert.equal(config.command, join(prefix, 'bin', 'omp-toolkit-mcp' + suffix));
     const server = spawn(config.command, config.args, {
         stdio: ['pipe', 'pipe', 'inherit'],
         signal: AbortSignal.timeout(90_000),
@@ -82,6 +82,7 @@ async function smokeMcp(config) {
             clientInfo: { name: 'release-smoke-test', version: '1' },
         });
         assert.equal(init.serverInfo.version, version);
+        assert.equal(init.serverInfo.name, 'omp-toolkit-mcp');
         send({ method: 'notifications/initialized' });
         const tools = (await request('tools/list')).tools.map(tool => tool.name).sort();
         assert.deepEqual(tools, [
@@ -133,6 +134,7 @@ try {
     writeFileSync(checksum, `${sha256}  ${asset}\n`);
     if (process.env.OMP_TEST_HOST) args.push('--omp-bin', process.env.OMP_TEST_HOST);
     run(process.execPath, args, { cwd: repo, stdio: 'inherit' });
+    if (!windows) assert.match(run(join(prefix, 'bin', 'omp-codex-mcp'), ['--version']), /omp-toolkit-mcp/);
 
     run('git', ['init', '--quiet', project]);
     writeFileSync(join(project, file), source);

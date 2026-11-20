@@ -1,4 +1,4 @@
-# OMP Codex Toolkit
+# OMP Toolkit
 
 [English](README.md) · 简体中文
 
@@ -8,32 +8,32 @@
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/y26s4824k264/omp-codex-toolkit/releases/latest) 下载并运行适合当前系统的脚本。安装器按架构选择发行包并校验 SHA-256。已安装的 Node.js 24+ 和 Oh My Pi 19.0.0 可以复用，缺少时从上游下载并校验。应用补丁和执行 Git 相关操作时需要 Git。
+从 [GitHub Releases](https://github.com/y26s4824k264/omp-toolkit/releases/latest) 下载并运行适合当前系统的脚本。安装器按架构选择发行包并校验 SHA-256。已安装的 Node.js 24+ 和 Oh My Pi 19.0.0 可以复用，缺少时从上游下载并校验。应用补丁和执行 Git 相关操作时需要 Git。
 
 也可以把下面这句话交给当前的编程智能体执行。
 
-> 请按当前系统安装 OMP Codex Toolkit，把它的本地 MCP 接到这个智能体，并确认 `ast_find` 可以调用。https://github.com/y26s4824k264/omp-codex-toolkit
+> 请按当前系统安装 OMP Toolkit，把它的本地 MCP 接到这个智能体，并确认 `ast_find` 可以调用。https://github.com/y26s4824k264/omp-toolkit
 
 **macOS 和 Linux**
 
 ```sh
-curl -fsSLo install.sh https://github.com/y26s4824k264/omp-codex-toolkit/releases/latest/download/install.sh && bash install.sh
+curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.sh && bash install.sh
 ```
 
-默认安装到 `$HOME/.local/omp-codex-toolkit`。用 `--prefix DIR` 指定目录，用 `--version v0.2.0` 固定版本，用 `--omp-bin FILE` 指定已有的 Oh My Pi 19.0.0。选装通用语言服务器时，先在 `PATH` 中准备带 npm 的 Node.js 24+，再传 `--with-lsp-servers`。
+默认安装到 `$HOME/.local/omp-toolkit`。用 `--prefix DIR` 指定目录，用 `--version v0.2.0` 固定版本，用 `--omp-bin FILE` 指定已有的 Oh My Pi 19.0.0。选装通用语言服务器时，先在 `PATH` 中准备带 npm 的 Node.js 24+，再传 `--with-lsp-servers`。
 
 **Windows PowerShell 5.1 或更新版本**
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-codex-toolkit/releases/latest/download/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.ps1 -OutFile install.ps1
 & .\install.ps1
 ```
 
-默认安装到 `%LOCALAPPDATA%\OMP Codex Toolkit`。对应参数包括 `-Prefix DIR`、`-Version v0.2.0`、`-OmpBin FILE` 和 `-WithLspServers`。若机器策略限制运行下载的 PowerShell 脚本，请按本机或组织的流程审核并允许运行。
+默认安装到 `%LOCALAPPDATA%\OMP Toolkit`。对应参数包括 `-Prefix DIR`、`-Version v0.2.0`、`-OmpBin FILE` 和 `-WithLspServers`。若机器策略限制运行下载的 PowerShell 脚本，请按本机或组织的流程审核并允许运行。
 
 安装器会检测本机可用的 Codex 和 Claude Code 命令，为检测到的客户端添加 MCP 配置。已有的 `omp` 配置保留。仅需工具和配置文件时，macOS/Linux 用 `--client none`，Windows 用 `-Client none`。需要指定单个客户端时，把参数值改为 `codex` 或 `claude`。可按脚本输出将工具的 `bin` 目录加入当前终端的 `PATH`。
 
-如果默认目录中已有 `v0.1.0` 的源码版，给新包指定一个独立的 `--prefix`。切换到新安装时，将客户端中旧的 `omp` 条目换成新生成的条目。安装器无法自动接入时会打印可在终端执行的命令。
+新版本的默认安装目录与 `v0.1.0` 源码版分开。切换到新安装时，将客户端中旧的 `omp` 条目换成新生成的条目。安装器无法自动接入时会打印可在终端执行的命令。
 
 ### 系统与功能
 
@@ -49,7 +49,7 @@ macOS 预编译包使用系统自带的 `open` 打开文件和网址。
 
 | 入口 | 功能 |
 | --- | --- |
-| `omp-codex-mcp` | 10 个 stdio MCP 工具，包括 AST、Hashline、日志、服务就绪和性能报告 |
+| `omp-toolkit-mcp` | 10 个 stdio MCP 工具，包括 AST、Hashline、日志、服务就绪和性能报告 |
 | `omp-refactor` | 结构化搜索、补丁预览和源码摘要 |
 | `omp-shell`、`obash` | Shell 执行、日志摘要和 Bash 语法解析 |
 | `omp-lsp` | 多语言诊断、导航和语义重命名预览 |
@@ -113,8 +113,8 @@ PUT 12.=12:
 已有 [Oh My Pi 19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0#install) 的 macOS 或 Linux 用户，也可以用源码安装器。需要 Git、Rustup、系统编译工具、Node.js 24+，以及选装语言服务器所需的 npm。
 
 ```sh
-git clone https://github.com/y26s4824k264/omp-codex-toolkit.git
-cd omp-codex-toolkit
+git clone https://github.com/y26s4824k264/omp-toolkit.git
+cd omp-toolkit
 ./scripts/install.sh --with-lsp-servers
 ```
 
@@ -170,7 +170,7 @@ Shell 二进制位于 `target/ci/examples/omp_shell_cli`，安装时命名为 `o
 
 ## MCP 工具
 
-stdio MCP 启动命令为 `omp-codex-mcp`。在 Codex 的工具发现中搜索 `mcp__omp__`，其他客户端按 `omp` 查找。`root` 为绝对项目目录，`file`、`files` 和 `log` 为目录内相对路径。
+stdio MCP 启动命令为 `omp-toolkit-mcp`。在 Codex 的工具发现中搜索 `mcp__omp__`，其他客户端按 `omp` 查找。`root` 为绝对项目目录，`file`、`files` 和 `log` 为目录内相对路径。
 
 | MCP 工具 | 用途 | JSON 字段 |
 | --- | --- | --- |
@@ -193,11 +193,11 @@ stdio MCP 启动命令为 `omp-codex-mcp`。在 Codex 的工具发现中搜索 `
 
 结果过长时按返回的 `Full JSON` 路径读所需字段。需要改写时，`ast_preview` 和 `hashline_preview` 返回的 `Full patch` 指向完整补丁。审阅后在项目根先执行 `git apply --check -- "$patch"`，再执行 `git apply -- "$patch"`。源文件变化后重新预览。失败日志和超过 4 MiB 的日志会直接取原始头尾，其余日志使用 OMP 的命令过滤器。
 
-终端用 `omp-refactor ast-find`、`ast`、`read-summary`、`read`、`hashline` 对应代码工具，用 `obash --json=native -c '…'` 解析 Bash，用 `omp-shell minimize` 摘要已有日志，用 `omp toks FILE --json` 估算文件 token。若手动从源码构建，可用下面的命令注册 Codex。
+终端用 `omp-refactor ast-find`、`ast`、`read-summary`、`read`、`hashline` 对应代码工具，用 `obash --json=native -c '…'` 解析 Bash，用 `omp-shell minimize` 摘要已有日志，用 `omp toks FILE --json` 估算文件 token。手动从源码构建后，可用下面的命令接入 Codex。
 
 ```sh
-cargo build --release --locked -p omp-refactor --bin omp-codex-mcp
-codex mcp add omp -- /absolute/path/to/omp-codex-mcp \
+cargo build --release --locked -p omp-refactor --bin omp-toolkit-mcp
+codex mcp add omp -- /absolute/path/to/omp-toolkit-mcp \
   --bin-dir /absolute/directory/with/native-tools --omp /absolute/path/to/omp \
   --node /absolute/path/to/node --profile-helper /absolute/path/to/profile/summary.mjs
 ```

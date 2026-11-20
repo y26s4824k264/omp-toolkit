@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
 import {
   access, chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir,
-  stat, writeFile,
+  stat, symlink, writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -12,7 +12,8 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseArgs } from "node:util";
 
-const packageName = "omp-codex-toolkit";
+const packageName = "omp-toolkit";
+const serverName = "omp-toolkit-mcp";
 const repo = "y26s4824k264/" + packageName;
 const upstreamVersion = "19.0.0";
 const upstreamCommit = "57771ae562b9345e0579bceb2d68d585e3e6927e";
@@ -210,21 +211,41 @@ function psQuote(value) {
   return "'" + value.replaceAll("'", "''") + "'";
 }
 
-async function writeLaunchers(stage, prefix, node, omp) {
-  for (const [name, module, env] of [
-    ["omp-lsp", join("lsp", "omp-lsp.mjs"), "OMP_LSP_BIN"],
-    ["omp-debug", join("debug", "omp-debug.mjs"), "OMP_DEBUG_BIN"],
-    ["codex-context-stats", join("stats", "codex-context-stats.mjs")],
-  ]) {
-    const target = join(prefix, "runtime", module);
-    const cmd = value => value.replaceAll("%", "%%");
+async function writeLaunchers(stage, prefix, node) {
+  const launchers = [
+    ["omp-lsp", ["lsp/omp-lsp.mjs", "OMP_LSP_BIN"]],
+    ["omp-debug", ["debug/omp-debug.mjs", "OMP_DEBUG_BIN"]],
+    ["codex-context-stats", ["stats/codex-context-stats.mjs"]],
+  ];
+  const dispatcher = [
+    'import { readFileSync } from "node:fs";',
+    'import { fileURLToPath } from "node:url";',
+    "const launchers = new Map(" + JSON.stringify(launchers) + ");",
+    'if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Node.js 24 or later is required");',
+    "const selected = launchers.get(process.argv[2]);",
+    'if (!selected) throw new Error("Unknown toolkit command");',
+    "const [modulePath, variable] = selected;",
+    "if (variable && !process.env[variable]) {",
+    '  const config = JSON.parse(readFileSync(new URL("../mcp-config.json", import.meta.url), "utf8"));',
+    "  const args = config.mcpServers.omp.args;",
+    '  const index = args.indexOf("--omp");',
+    '  if (index < 0 || !args[index + 1]) throw new Error("Missing Oh My Pi path in the install configuration");',
+    "  process.env[variable] = args[index + 1];",
+    "}",
+    "const entry = new URL(modulePath, import.meta.url);",
+    "process.argv.splice(1, 2, fileURLToPath(entry));",
+    "await import(entry);",
+    "",
+  ].join("\n");
+  await writeFile(join(stage, "runtime", "launch-cli.mjs"), dispatcher, { flag: "wx" });
+  const target = join(prefix, "runtime", "launch-cli.mjs");
+  for (const [name] of launchers) {
     const contents = windows
       ? "@echo off\r\nsetlocal DisableDelayedExpansion\r\n"
-        + (env ? 'if not defined ' + env + ' set "' + env + "=" + cmd(omp) + '"\r\n' : "")
-        + '"' + cmd(node) + '" "' + cmd(target) + '" %*\r\nexit /b %ERRORLEVEL%\r\n'
-      : "#!/bin/sh\n"
-        + (env ? 'if [ -z "${' + env + ':-}" ]; then export ' + env + "=" + shQuote(omp) + "; fi\n" : "")
-        + "exec " + shQuote(node) + " " + shQuote(target) + ' "$@"\n';
+        + 'set "OMP_TOOLKIT_NODE=%~dp0..\\runtime\\node.exe"\r\n'
+        + 'if not exist "%OMP_TOOLKIT_NODE%" set "OMP_TOOLKIT_NODE=node.exe"\r\n'
+        + '"%OMP_TOOLKIT_NODE%" "%~dp0..\\runtime\\launch-cli.mjs" ' + name + " %*\r\nexit /b %ERRORLEVEL%\r\n"
+      : "#!/bin/sh\nexec " + shQuote(node) + " " + shQuote(target) + " " + name + ' "$@"\n';
     const file = join(stage, "bin", name + (windows ? ".cmd" : ""));
     await writeFile(file, contents, { mode: 0o755, flag: "wx" });
   }
@@ -357,7 +378,7 @@ async function configureClient(client, config, directory, explicit) {
   }
   const absent = client === "codex"
     ? /No MCP server named ['"]omp['"] found\./
-    : /No MCP server found with name:?\s+['"]?omp\b/i;
+    : /^(?:Error:\s*)?No MCP server (?:named|found with name:?)\s+["']?omp["']?(?:[.\s]|$)/im;
   if (!result.error && result.status === 1 && absent.test(result.stderr + "\n" + result.stdout)) {
     const added = run(binary, [...entry, ...add], { cwd: directory, stdio: "inherit", timeout: 30_000 });
     if (added.status === 0) {
@@ -373,7 +394,7 @@ async function configureClient(client, config, directory, explicit) {
 
 function defaultPrefix() {
   return windows
-    ? join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "OMP Codex Toolkit")
+    ? join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "OMP Toolkit")
     : join(homedir(), ".local", packageName);
 }
 
@@ -402,7 +423,7 @@ async function install(options) {
     await mkdir(stage, { mode: 0o700 });
     const { file, version } = await artifact(options, temp);
     extract(file, stage);
-    for (const name of ["omp-refactor", "omp-shell", "obash", "omp-codex-mcp"]) {
+    for (const name of ["omp-refactor", "omp-shell", "obash", serverName]) {
       if (!(await state(join(stage, "bin", name + exe)))?.isFile()) throw new Error("Archive is missing " + name);
     }
     for (const module of [
@@ -422,11 +443,12 @@ async function install(options) {
     }
     const omp = await engine(options, stage, prefix);
     await languageServers(options, prefix, stage);
-    await writeLaunchers(stage, prefix, node, omp);
+    await writeLaunchers(stage, prefix, node);
+    if (!windows) await symlink(serverName, join(stage, "bin", "omp-codex-mcp"));
 
     const bin = join(prefix, "bin");
     const config = {
-      command: join(bin, "omp-codex-mcp" + exe),
+      command: join(bin, serverName + exe),
       args: ["--bin-dir", bin, "--omp", omp, "--node", node,
         "--profile-helper", join(prefix, "runtime", "profile", "summary.mjs")],
     };

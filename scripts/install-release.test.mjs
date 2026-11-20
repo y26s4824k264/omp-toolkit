@@ -20,10 +20,10 @@ async function fixture(t, entries = {}) {
   const payload = join(root, "payload");
   const archive = join(root, "toolkit.tar.gz");
   const checksum = join(root, "SHA256SUMS");
-  const prefix = join(root, "install with ' spaces");
+  const prefix = join(root, "install with ' spaces and 中文");
   const engine = join(root, "engine");
   await mkdir(join(payload, "bin"), { recursive: true });
-  for (const name of ["omp-refactor", "omp-shell", "obash", "omp-codex-mcp"]) {
+  for (const name of ["omp-refactor", "omp-shell", "obash", "omp-toolkit-mcp"]) {
     await writeFile(join(payload, "bin", name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   }
   for (const [dir, file] of [
@@ -31,7 +31,10 @@ async function fixture(t, entries = {}) {
     ["profile", "summary.mjs"],
   ]) {
     await mkdir(join(payload, "runtime", dir), { recursive: true });
-    await writeFile(join(payload, "runtime", dir, file), "console.log(JSON.stringify(process.argv.slice(2)))\n");
+    const fixtureCode = dir === "lsp"
+      ? "console.log(JSON.stringify([process.env.OMP_LSP_BIN, ...process.argv.slice(2)]))\n"
+      : "console.log(JSON.stringify(process.argv.slice(2)))\n";
+    await writeFile(join(payload, "runtime", dir, file), fixtureCode);
   }
   for (const [file, content] of Object.entries(entries)) await writeFile(join(payload, file), content);
   const tar = run("tar", ["-czf", archive, "-C", payload, "bin", "runtime", ...Object.keys(entries)]);
@@ -53,11 +56,19 @@ test("installs and re-installs with quoted paths and relative client settings", 
   const installed = install();
   assert.equal(installed.status, 0, installed.stderr);
   const config = JSON.parse(await readFile(join(prefix, "mcp-config.json"), "utf8")).mcpServers.omp;
-  assert.equal(config.command, join(prefix, "bin", "omp-codex-mcp"));
+  assert.equal(config.command, join(prefix, "bin", "omp-toolkit-mcp"));
   assert.ok(config.args.includes(join(prefix, "runtime", "profile", "summary.mjs")));
   const tool = run(join(prefix, "bin", "codex-context-stats"), ["argument with spaces", "$literal"]);
   assert.equal(tool.status, 0, tool.stderr);
   assert.deepEqual(JSON.parse(tool.stdout), ["argument with spaces", "$literal"]);
+  const lsp = run(join(prefix, "bin", "omp-lsp"), ["catalog"]);
+  assert.equal(lsp.status, 0, lsp.stderr);
+  assert.deepEqual(JSON.parse(lsp.stdout), [config.args[config.args.indexOf("--omp") + 1], "catalog"]);
+  const override = run(join(prefix, "bin", "omp-lsp"), ["catalog"], {
+    env: { ...process.env, OMP_LSP_BIN: "external-engine" },
+  });
+  assert.equal(override.status, 0, override.stderr);
+  assert.deepEqual(JSON.parse(override.stdout), ["external-engine", "catalog"]);
 
   const reinstalled = install();
   assert.equal(reinstalled.status, 0, reinstalled.stderr);
@@ -98,7 +109,7 @@ test("connects both available clients by default using explicit stdio commands",
   const { root, prefix, install } = await fixture(t);
   for (const [name, absent] of [
     ["codex", "Error: No MCP server named 'omp' found."],
-    ["claude", "No MCP server found with name: omp"],
+    ["claude", 'No MCP server named "omp". Run the add command to add one.'],
   ]) {
     await writeFile(join(root, name), "#!/bin/sh\n"
       + 'if [ "$1 $2 $3" = "mcp get omp" ]; then\n'
@@ -115,7 +126,7 @@ test("connects both available clients by default using explicit stdio commands",
   assert.match(result.stdout, /Connected omp to claude/);
   const codex = await readFile(join(root, "codex.log"), "utf8");
   const claude = await readFile(join(root, "claude.log"), "utf8");
-  const binary = join(prefix, "bin", "omp-codex-mcp");
+  const binary = join(prefix, "bin", "omp-toolkit-mcp");
   assert.ok(codex.startsWith("mcp\nadd\nomp\n--\n" + binary + "\n"));
   assert.ok(claude.startsWith("mcp\nadd\n--scope\nuser\n--transport\nstdio\nomp\n--\n" + binary + "\n"));
 });

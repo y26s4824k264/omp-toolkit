@@ -5,7 +5,7 @@ upstream_url=https://github.com/can1357/oh-my-pi.git
 upstream_commit=57771ae562b9345e0579bceb2d68d585e3e6927e
 upstream_version=19.0.0
 toolkit_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-prefix="$HOME/.local/omp-codex-toolkit"
+prefix="$HOME/.local/omp-toolkit-source"
 omp_bin="$HOME/.omp/bin/$upstream_version/omp"
 build_dir="$toolkit_dir/target"
 upstream_source=
@@ -15,7 +15,7 @@ usage() {
     cat <<'EOF'
 Usage: scripts/install.sh [options]
 
-  --prefix DIR           Install into DIR (default: ~/.local/omp-codex-toolkit)
+  --prefix DIR           Install into DIR (default: ~/.local/omp-toolkit-source)
   --omp-bin FILE         OMP 19.0.0 executable (default: ~/.omp/bin/19.0.0/omp)
   --upstream-source DIR  Read the pinned Oh My Pi commit from a local Git repository
   --build-dir DIR        Store Cargo build outputs in DIR (default: toolkit target/)
@@ -65,7 +65,7 @@ omp_version=$("$omp_bin" --version) || die "cannot run $omp_bin --version"
 
 mkdir -p -- "$build_dir"
 build_dir=$(cd -- "$build_dir" && pwd -P)
-stage_dir=$(mktemp -d "${TMPDIR:-/tmp}/omp-codex-toolkit.XXXXXXXX")
+stage_dir=$(mktemp -d "${TMPDIR:-/tmp}/omp-toolkit.XXXXXXXX")
 trap 'rm -rf -- "$stage_dir"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -129,14 +129,14 @@ if [[ -d "$toolkit_dir/licenses" ]]; then
 fi
 
 install -m 755 "$build_dir/toolkit/release/omp-refactor" "$payload/bin/omp-refactor"
-install -m 755 "$build_dir/toolkit/release/omp-codex-mcp" "$payload/bin/omp-codex-mcp"
+install -m 755 "$build_dir/toolkit/release/omp-toolkit-mcp" "$payload/bin/omp-toolkit-mcp"
 install -m 755 "$build_dir/upstream-shell/ci/examples/omp_shell_cli" "$payload/bin/omp-shell"
 install -m 755 "$build_dir/upstream-shell/ci/obash" "$payload/bin/obash"
 
 mkdir -p -- "$prefix"
 prefix=$(cd -- "$prefix" && pwd -P)
 bin_dir="$prefix/bin"
-runtime_dir="$prefix/share/omp-codex-toolkit"
+runtime_dir="$prefix/share/omp-toolkit"
 
 write_launcher() {
     local launcher=$1 module=$2 omp_env=${3:-}
@@ -159,9 +159,12 @@ write_launcher codex-context-stats stats/codex-context-stats.mjs
 mkdir -p -- "$bin_dir" "$runtime_dir"
 cp -R "$payload/runtime/." "$runtime_dir/"
 install -m 755 "$payload/bin/"* "$bin_dir/"
+if [[ ! -e "$bin_dir/omp-codex-mcp" && ! -L "$bin_dir/omp-codex-mcp" ]]; then
+    ln -s omp-toolkit-mcp "$bin_dir/omp-codex-mcp"
+fi
 
 printf '\nInstalled OMP toolkit in %s\n' "$prefix"
 # shellcheck disable=SC2016
 printf 'Add to PATH: export PATH=%q:"$PATH"\n' "$bin_dir"
 printf 'Register in Codex: codex mcp add omp -- %q --bin-dir %q --omp %q --node %q --profile-helper %q\n' \
-    "$bin_dir/omp-codex-mcp" "$bin_dir" "$omp_bin" "$node_bin" "$runtime_dir/profile/summary.mjs"
+    "$bin_dir/omp-toolkit-mcp" "$bin_dir" "$omp_bin" "$node_bin" "$runtime_dir/profile/summary.mjs"

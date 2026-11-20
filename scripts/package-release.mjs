@@ -12,7 +12,7 @@ const windows = process.platform === 'win32';
 const suffix = windows ? '.exe' : '';
 const targetDir = join(root, 'target');
 const dist = join(targetDir, 'distribution');
-const asset = `omp-codex-toolkit-${process.platform}-${process.arch}.${windows ? 'zip' : 'tar.gz'}`;
+const asset = `omp-toolkit-${process.platform}-${process.arch}.${windows ? 'zip' : 'tar.gz'}`;
 const staging = mkdtempSync(join(targetDir, 'release-payload-'));
 const bin = join(staging, 'bin');
 const runtime = join(staging, 'runtime');
@@ -31,10 +31,10 @@ function run(command, args) {
 }
 
 try {
-    for (const name of ['omp-refactor', 'omp-codex-mcp', 'omp-shell', 'obash']) {
+    for (const name of ['omp-refactor', 'omp-toolkit-mcp', 'omp-shell', 'obash']) {
         const from = {
             'omp-refactor': join(targetDir, 'release', 'omp-refactor'),
-            'omp-codex-mcp': join(targetDir, 'release', 'omp-codex-mcp'),
+            'omp-toolkit-mcp': join(targetDir, 'release', 'omp-toolkit-mcp'),
             'omp-shell': join(shellTarget, 'examples', 'omp_shell_cli'),
             obash: join(shellTarget, 'obash'),
         }[name];
