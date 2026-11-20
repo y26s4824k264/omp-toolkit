@@ -1,0 +1,130 @@
+[package]
+name = "omp-refactor"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Standalone Oh My Pi editing tools and stdio MCP adapter for Codex"
+repository = "https://github.com/y26s4824k264/omp-codex-toolkit"
+
+[[bin]]
+name = "omp-refactor"
+path = "src/main.rs"
+
+[[bin]]
+name = "omp-codex-mcp"
+path = "src/mcp.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+libc.workspace = true
+regex.workspace = true
+rmcp = { version = "=3.11.0", default-features = false, features = ["macros", "server", "transport-io"] }
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+omp-ast.workspace = true
+omp-edit = { path = "crates/edit" }
+
+[lints]
+workspace = true
+
+[workspace]
+members = ["crates/ast", "crates/diff", "crates/edit", "crates/vfs", "crates/xfs"]
+exclude = ["crates/vendor/grep-searcher", "crates/vendor/tree-sitter-go"]
+resolver = "3"
+
+[workspace.package]
+version = "19.0.0"
+edition = "2024"
+rust-version = "1.101"
+license = "MIT"
+authors = ["Stencil Labs, Inc."]
+homepage = "https://omp.sh/"
+repository = "https://github.com/can1357/oh-my-pi"
+
+[patch.crates-io]
+grep-searcher = { path = "crates/vendor/grep-searcher" }
+tree-sitter-go = { path = "crates/vendor/tree-sitter-go" }
+
+[profile.release]
+strip = true
+
+[workspace.lints]
+
+[workspace.dependencies]
+omp-ast = { path = "crates/ast", default-features = false }
+omp-diff = { path = "crates/diff" }
+omp-xfs = { path = "crates/xfs" }
+omp-vfs = { path = "crates/vfs" }
+hashbrown = "0.17.1"
+tempfile = "3.27.0"
+async-trait = "0.1"
+futures = "0.3"
+parking_lot = "0.12.5"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+flume = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+anyhow = "1.0"
+thiserror = "2"
+clap = { version = "4", features = ["derive", "env"] }
+regex = "1"
+phf = { version = "0.14", features = ["macros"] }
+xxhash-rust = { version = "0.8", features = ["xxh64", "xxh32"] }
+libc = "0.2.191"
+windows-sys = { version = "0.61", features = [
+   "Win32_Foundation",
+   "Win32_Globalization",
+   "Win32_Media_Audio",
+   "Win32_Media_Multimedia",
+   "Win32_Security",
+   "Win32_Storage_FileSystem",
+   "Win32_Storage_ProjectedFileSystem",
+   "Win32_System_Com",
+   "Win32_System_Console",
+   "Win32_System_LibraryLoader",
+   "Win32_System_IO",
+   "Win32_System_Ioctl",
+   "Win32_System_JobObjects",
+   "Win32_System_Pipes",
+   "Win32_System_SystemInformation",
+   "Win32_System_Threading",
+] }
+globset = "0.4"
+grep-matcher = "0.1"
+grep-pcre2 = "0.1"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+ignore = "0.4"
+xutf = "2.3"
+ast-grep-core = { version = "0.39", default-features = false, features = [
+   "tree-sitter",
+] }
+tree-sitter = "0.25"
+tree-sitter-bash = "0.25"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-diff = "0.1"
+tree-sitter-elisp = "1.7.2"
+tree-sitter-fortran = "0.6.0"
+tree-sitter-go = "0.25"
+tree-sitter-html = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-lua = "0.5"
+tree-sitter-md = "0.5"
+tree-sitter-python = "0.25"
+tree-sitter-regex = "0.25"
+tree-sitter-ruby = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-swift = "0.7"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-typescript = "0.23"
+tree-sitter-yaml = "0.7"
