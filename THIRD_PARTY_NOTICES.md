@@ -18,6 +18,6 @@ Binary bundles contain the compiled Rust tools, the upstream Shell and `obash` e
 
 For the macOS binary bundles, the Shell build uses the system `open` command by omitting the upstream `util.open` builtin and its SDK-derived framework bindings.
 
-The installer obtains the Oh My Pi host and Node.js from their respective upstream distributors when needed. Optional language servers and debug adapters carry their own terms.
+The installer obtains Node.js and the common language servers from their upstream distributors. Language servers and debug adapters carry their own terms.
 
 The toolkit is independently maintained. References to Oh My Pi and Codex identify upstream software and integration targets.

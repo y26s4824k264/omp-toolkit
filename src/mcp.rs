@@ -22,6 +22,7 @@ use tokio::{process::Command, time::timeout};
 
 mod log_preview;
 mod service_ready;
+mod token_count;
 
 const INLINE_BYTES: usize = 12_000;
 // The input limit of OMP's command-aware minimizer.
@@ -38,9 +39,8 @@ struct Cli {
     /// Directory containing omp-refactor, omp-shell and obash.
     #[arg(long)]
     bin_dir: PathBuf,
-    /// OMP executable used for offline token counts.
-    #[arg(long)]
-    omp: PathBuf,
+    #[arg(long = "omp", hide = true)]
+    _legacy_omp: Option<PathBuf>,
     /// Node executable for reading saved performance profiles.
     #[arg(long, requires = "profile_helper")]
     node: Option<PathBuf>,
@@ -52,7 +52,6 @@ struct Cli {
 #[derive(Clone)]
 struct OmpTools {
     bin_dir: PathBuf,
-    omp: PathBuf,
     node: Option<PathBuf>,
     profile_helper: Option<PathBuf>,
     tool_router: ToolRouter<Self>,
@@ -294,16 +293,15 @@ impl OmpTools {
     }
 
     #[tool(
-        description = "Count a local file with OMP's offline tokenizers.",
+        description = "Count tokens in a local UTF-8 file with offline tokenizers.",
         annotations(read_only_hint = true)
     )]
     async fn token_count(&self, Parameters(input): Parameters<CountFile>) -> CallToolResult {
         let result = async {
             let path = project_file(&input.root, &input.file)?;
-            let mut command = Command::new(&self.omp);
-            command.arg("toks").arg(path).arg("--json");
-            let output = checked(run(command).await?)?;
-            preview_text(&output.stdout)
+            tokio::task::spawn_blocking(move || token_count::count_file(&path))
+                .await
+                .context("join local token count")?
         }
         .await;
         tool_result(result)
@@ -498,10 +496,7 @@ fn tool_result(result: Result<String>) -> CallToolResult {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    ensure!(
-        cli.bin_dir.is_absolute() && cli.omp.is_absolute(),
-        "supply absolute executable paths"
-    );
+    ensure!(cli.bin_dir.is_absolute(), "supply an absolute tool directory");
     ensure!(
         cli.node.as_ref().is_none_or(|path| path.is_absolute())
             && cli
@@ -512,7 +507,6 @@ async fn main() -> Result<()> {
     );
     let server = OmpTools {
         bin_dir: cli.bin_dir,
-        omp: cli.omp,
         node: cli.node,
         profile_helper: cli.profile_helper,
         tool_router: OmpTools::tool_router(),

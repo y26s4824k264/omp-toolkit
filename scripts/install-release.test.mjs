@@ -21,7 +21,6 @@ async function fixture(t, entries = {}) {
   const archive = join(root, "toolkit.tar.gz");
   const checksum = join(root, "SHA256SUMS");
   const prefix = join(root, "install with ' spaces and 中文");
-  const engine = join(root, "engine");
   await mkdir(join(payload, "bin"), { recursive: true });
   for (const name of ["omp-refactor", "omp-shell", "obash", "omp-toolkit-mcp"]) {
     await writeFile(join(payload, "bin", name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -31,22 +30,23 @@ async function fixture(t, entries = {}) {
     ["profile", "summary.mjs"],
   ]) {
     await mkdir(join(payload, "runtime", dir), { recursive: true });
-    const fixtureCode = dir === "lsp"
-      ? "console.log(JSON.stringify([process.env.OMP_LSP_BIN, ...process.argv.slice(2)]))\n"
-      : "console.log(JSON.stringify(process.argv.slice(2)))\n";
-    await writeFile(join(payload, "runtime", dir, file), fixtureCode);
+    await writeFile(join(payload, "runtime", dir, file), "console.log(JSON.stringify(process.argv.slice(2)))\n");
   }
+  const servers = join(payload, "runtime", "lsp", "servers");
+  await mkdir(servers, { recursive: true });
+  await writeFile(join(servers, "package.json"), '{"name":"fixture-language-servers"}\n');
+  await writeFile(join(servers, "package-lock.json"), '{"name":"fixture-language-servers","lockfileVersion":3}\n');
   for (const [file, content] of Object.entries(entries)) await writeFile(join(payload, file), content);
   const tar = run("tar", ["-czf", archive, "-C", payload, "bin", "runtime", ...Object.keys(entries)]);
   assert.equal(tar.status, 0, tar.stderr);
   const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
   await writeFile(checksum, digest + "  toolkit.tar.gz\n");
-  await writeFile(engine, "#!/bin/sh\nprintf 'omp/19.0.0\\n'\n", { mode: 0o755 });
   return {
     root, prefix, checksum,
     install: (extra = ["--client", "none"], opts = {}) => run(process.execPath, [
       installer, "--archive", archive, "--checksum", checksum,
-      "--version", "v0.2.0", "--prefix", prefix, "--omp-bin", engine, ...extra,
+      "--version", "v0.2.0", "--prefix", prefix,
+      ...(extra.includes("--npm-cli") ? [] : ["--without-lsp-servers"]), ...extra,
     ], opts),
   };
 }
@@ -57,18 +57,16 @@ test("installs and re-installs with quoted paths and relative client settings", 
   assert.equal(installed.status, 0, installed.stderr);
   const config = JSON.parse(await readFile(join(prefix, "mcp-config.json"), "utf8")).mcpServers.omp;
   assert.equal(config.command, join(prefix, "bin", "omp-toolkit-mcp"));
-  assert.ok(config.args.includes(join(prefix, "runtime", "profile", "summary.mjs")));
+  assert.deepEqual(config.args, [
+    "--bin-dir", join(prefix, "bin"), "--node", await realpath(process.execPath),
+    "--profile-helper", join(prefix, "runtime", "profile", "summary.mjs"),
+  ]);
   const tool = run(join(prefix, "bin", "codex-context-stats"), ["argument with spaces", "$literal"]);
   assert.equal(tool.status, 0, tool.stderr);
   assert.deepEqual(JSON.parse(tool.stdout), ["argument with spaces", "$literal"]);
   const lsp = run(join(prefix, "bin", "omp-lsp"), ["catalog"]);
   assert.equal(lsp.status, 0, lsp.stderr);
-  assert.deepEqual(JSON.parse(lsp.stdout), [config.args[config.args.indexOf("--omp") + 1], "catalog"]);
-  const override = run(join(prefix, "bin", "omp-lsp"), ["catalog"], {
-    env: { ...process.env, OMP_LSP_BIN: "external-engine" },
-  });
-  assert.equal(override.status, 0, override.stderr);
-  assert.deepEqual(JSON.parse(override.stdout), ["external-engine", "catalog"]);
+  assert.deepEqual(JSON.parse(lsp.stdout), ["catalog"]);
 
   const reinstalled = install();
   assert.equal(reinstalled.status, 0, reinstalled.stderr);
@@ -96,7 +94,7 @@ test("protects existing directories and rejects unrelated archive entries", { sk
 test("reuses an existing Codex MCP name", { skip: windows }, async t => {
   const { root, install } = await fixture(t);
   await writeFile(join(root, "codex"), "#!/bin/sh\n"
-    + 'if [ "$1 $2 $3" = "mcp get omp" ]; then exit 0; fi\n'
+    + 'if [ "$1 $2 $3" = "mcp get omp" ]; then printf "%s\\n" \'{"transport":{"command":"/other/omp"}}\'; exit 0; fi\n'
     + "exit 5\n", { mode: 0o755 });
   const result = install(["--client", "codex"], {
     env: { ...process.env, PATH: root + ":" + process.env.PATH },
@@ -141,4 +139,72 @@ test("installs without clients and keeps guidance on an explicit missing client"
   assert.equal(explicit.status, 1);
   assert.match(explicit.stderr, /claude was not found on PATH/);
   assert.ok(await readFile(join(prefix, "mcp-config.json"), "utf8"));
+});
+
+test("installs the locked language servers by default", { skip: windows }, async t => {
+  const { root, prefix, install } = await fixture(t);
+  const npm = join(root, "npm-cli.js");
+  await writeFile(npm, [
+    'const { readFileSync, writeFileSync, mkdirSync } = require("node:fs");',
+    'if (process.argv.slice(2).join(" ") !== "ci --ignore-scripts --no-audit --no-fund") process.exit(7);',
+    'const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));',
+    'mkdirSync("node_modules");',
+    'writeFileSync("node_modules/installed", lock.name);',
+  ].join("\n"));
+  const result = install(["--client", "none", "--npm-cli", npm]);
+  assert.equal(result.status, 0, result.stderr);
+  const stamp = join(prefix, "runtime", "lsp", "servers", "node_modules", "installed");
+  assert.equal(await readFile(stamp, "utf8"), "fixture-language-servers");
+  assert.match(await readFile(join(prefix, "AGENT-INSTRUCTIONS.md"), "utf8"), /git apply --check/);
+});
+
+test("adds and updates only the managed instructions of matching clients", { skip: windows }, async t => {
+  const { root, prefix, install } = await fixture(t);
+  const plain = install();
+  assert.equal(plain.status, 0, plain.stderr);
+  const config = JSON.parse(await readFile(join(prefix, "mcp-config.json"), "utf8")).mcpServers.omp;
+  const codex = join(root, "codex-config");
+  const claude = join(root, "claude-config");
+  await mkdir(codex);
+  await mkdir(claude);
+  const agents = join(codex, "AGENTS.md");
+  const override = join(codex, "AGENTS.override.md");
+  const md = join(claude, "CLAUDE.md");
+  const defaultRule = "# User fallback rules\nDo not touch.\n";
+  const privateRule = "# User global rules\r\nKeep these instructions.\r\n";
+  await writeFile(agents, defaultRule);
+  await writeFile(override, privateRule);
+  await writeFile(md, privateRule);
+  await writeFile(join(codex, "mock-mcp.json"), JSON.stringify({
+    enabled: true, transport: { type: "stdio", ...config },
+  }));
+  await writeFile(join(claude, ".claude.json"), JSON.stringify({ mcpServers: { omp: config } }));
+  await writeFile(join(root, "codex"), '#!/bin/sh\n[ "$2" = get ] || exit 5\ncat "$CODEX_HOME/mock-mcp.json"\n',
+    { mode: 0o755 });
+  await writeFile(join(root, "claude"), '#!/bin/sh\n[ "$2" = get ] || exit 5\nexit 0\n', { mode: 0o755 });
+  const opts = { env: {
+    ...process.env, PATH: root + ":/usr/bin:/bin", CODEX_HOME: codex, CLAUDE_CONFIG_DIR: claude,
+  } };
+  const first = install([], opts);
+  assert.equal(first.status, 0, first.stderr);
+  const firstCodex = await readFile(override, "utf8");
+  const firstClaude = await readFile(md, "utf8");
+  for (const file of [firstCodex, firstClaude]) {
+    assert.ok(file.startsWith(privateRule + "\r\n"));
+    assert.equal(file.match(/<!-- omp-toolkit:start -->/g).length, 1);
+    assert.match(file, /<!-- omp-toolkit:end -->\r\n$/);
+  }
+  assert.equal(await readFile(agents, "utf8"), defaultRule);
+  const retry = install([], opts);
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(await readFile(override, "utf8"), firstCodex);
+  assert.equal(await readFile(md, "utf8"), firstClaude);
+
+  await writeFile(md, privateRule);
+  await writeFile(join(claude, ".claude.json"), JSON.stringify({
+    mcpServers: { omp: { ...config, command: "/other/omp" } },
+  }));
+  const oldServer = install([], opts);
+  assert.equal(oldServer.status, 0, oldServer.stderr);
+  assert.equal(await readFile(md, "utf8"), privateRule);
 });

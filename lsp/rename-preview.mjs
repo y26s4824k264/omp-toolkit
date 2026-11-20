@@ -1,13 +1,6 @@
-import { fileURLToPath } from "node:url";
-import {
-  ensureWorkspaceFolders, getOrCreateClient, isRustAnalyzerClient, reconcileFileFromDisk,
-  reconcileOpenFilesFromDisk, sendRequest, supportsMethod, unservedCheckout, waitForProjectLoaded,
-} from "@oh-my-pi/pi-coding-agent/lsp/client";
-import { getConfig } from "@oh-my-pi/pi-coding-agent/lsp/config";
-import { hasRustWorkspaceAncestor } from "@oh-my-pi/pi-coding-agent/lsp/diagnostics";
-import { applyTextEditsToString, flattenWorkspaceTextEdits } from "@oh-my-pi/pi-coding-agent/lsp/edits";
-import { getLspServersForFile, isMethodNotFoundError, isProjectAwareLspServer } from "@oh-my-pi/pi-coding-agent/lsp/servers";
-import { fileToUri, findSymbolInFile, resolveSymbolColumn } from "@oh-my-pi/pi-coding-agent/lsp/utils";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { symbolPosition } from "./client.mjs";
+import { selectServers } from "./servers.mjs";
 import {
   checkRenameDestination, encodeReplacement, readRenameSnapshot, renameApplyRoot, writeRenamePatch,
 } from "./rename-patch.mjs";
@@ -15,92 +8,91 @@ import {
 const symbolMethod = "textDocument/rename";
 const moveMethod = "workspace/willRenameFiles";
 
-async function selectSymbolServer(candidates, root, signal) {
+function openSource(client, source) {
+  const document = client.open(source.path);
+  if (document.text !== source.text) throw new Error("Source changed during language-server lookup: " + source.name);
+  return document;
+}
+
+async function symbolEdit(definitions, root, source, request, signal, connect) {
   const failures = [];
-  let fallback;
-  for (const [name, config] of candidates) {
+  for (const server of selectServers(definitions, root, source.path, request.action)) {
     signal.throwIfAborted();
     try {
-      const client = await getOrCreateClient(config, root, undefined, signal);
-      const entry = { name, config, client };
-      if (supportsMethod(client, "renameProvider", symbolMethod)) return entry;
-      fallback ??= entry;
+      const client = await connect(server, signal);
+      if (!client.capabilities.renameProvider && !client.hasCapability(symbolMethod)) continue;
+      const document = openSource(client, source);
+      const position = symbolPosition(document.text, request.symbol, request.line);
+      // Wait for configured TypeScript projects before asking for cross-file edits.
+      await client.waitForIndex(signal, source.path);
+      const edit = await client.request(symbolMethod, {
+        textDocument: { uri: document.uri }, position, newName: request.new_name,
+      }, signal);
+      await client.waitForIndex(signal);
+      return [{ name: server.name, client, edit }];
     } catch (error) {
-      failures.push(`${name}: ${error.message}`);
+      failures.push(server.name + ": " + error.message);
     }
   }
-  signal.throwIfAborted();
-  if (fallback) return fallback;
-  throw new Error(failures.length ? `No rename language server started (${failures.join(", ")})` : "No language server handles the source file");
+  throw new Error(failures.length ? failures.join("\n") : "No language server supports symbol rename for the source file");
 }
 
-async function requireCompleteIndex(entry, files, signal) {
-  signal.throwIfAborted();
-  if (entry.client.activeProgressTokens.size > 0) {
-    throw new Error(`${entry.name} is still indexing; retry the rename preview`);
-  }
-  for (const file of files) {
-    if (await unservedCheckout(entry.client, file)) {
-      throw new Error(`${entry.name} did not index the checkout containing ${file}`);
-    }
-  }
-}
-
-async function symbolEdit(config, root, source, request, signal) {
-  const candidates = getLspServersForFile(config, source.path);
-  const entry = await selectSymbolServer(candidates, root, signal);
-  await reconcileFileFromDisk(entry.client, source.path, signal);
-  const rust = entry.name === "rust-analyzer" || isRustAnalyzerClient(entry.client);
-  if (isProjectAwareLspServer(entry.config) && (!rust || hasRustWorkspaceAncestor(source.path))) {
-    await waitForProjectLoaded(entry.client, signal);
-  }
-  const location = request.line === undefined
-    ? await findSymbolInFile(source.path, request.symbol)
-    : { line: request.line, character: await resolveSymbolColumn(source.path, request.line, request.symbol) };
-  await reconcileOpenFilesFromDisk(entry.client, signal, undefined, "throw");
-  const edit = await sendRequest(entry.client, symbolMethod, {
-    textDocument: { uri: fileToUri(source.path) },
-    position: { line: location.line - 1, character: location.character },
-    newName: request.new_name,
-  }, signal);
-  await requireCompleteIndex(entry, [source.path], signal);
-  return [{ ...entry, edit }];
-}
-
-async function fileEdits(config, root, source, target, signal) {
-  const sourceServers = new Map(getLspServersForFile(config, source.path));
-  const servers = new Map([...sourceServers, ...getLspServersForFile(config, target.path)]);
-  const files = [{ oldUri: fileToUri(source.path), newUri: fileToUri(target.path) }];
+async function fileEdits(definitions, root, source, target, signal, connect) {
+  const sourceServers = selectServers(definitions, root, source.path, "rename-file-preview");
+  const targetServers = selectServers(definitions, root, target.path, "rename-file-preview");
+  const servers = new Map([...sourceServers, ...targetServers].map(server => [server.name + "\0" + server.root, server]));
+  const files = [{ oldUri: pathToFileURL(source.path).href, newUri: pathToFileURL(target.path).href }];
   const replies = [];
-  for (const [name, server] of servers) {
+  for (const server of servers.values()) {
     signal.throwIfAborted();
-    const client = await getOrCreateClient(server, root, undefined, signal);
-    // Without this capability the server never owes a file-rename response.
-    const advertised = client.serverCapabilities?.workspace?.fileOperations?.willRename;
-    const registered = Array.from(client.dynamicCapabilityRegistrations?.values() ?? []).includes(moveMethod);
-    if (!advertised && !registered) continue;
-    await ensureWorkspaceFolders(client, [source.path, target.path], signal);
-    if (sourceServers.has(name)) await reconcileFileFromDisk(client, source.path, signal);
-    if (isProjectAwareLspServer(server)) await waitForProjectLoaded(client, signal);
-    await reconcileOpenFilesFromDisk(client, signal, undefined, "throw");
+    const client = await connect(server, signal);
+    if (!client.capabilities.workspace?.fileOperations?.willRename && !client.hasCapability(moveMethod)) continue;
+    if (sourceServers.some(candidate => candidate.name === server.name && candidate.root === server.root)) {
+      openSource(client, source);
+      await client.waitForIndex(signal, source.path);
+    } else {
+      await client.waitForIndex(signal);
+    }
     let edit;
     try {
-      edit = await sendRequest(client, moveMethod, { files }, signal);
+      edit = await client.request(moveMethod, { files }, signal);
     } catch (error) {
-      if (isMethodNotFoundError(error)) continue;
+      if (error.code === -32601) continue;
       throw error;
     }
-    const entry = { name, client, edit };
-    await requireCompleteIndex(entry, [source.path, target.path], signal);
-    replies.push(entry);
+    await client.waitForIndex(signal);
+    replies.push({ name: server.name, client, edit });
   }
-  if (replies.length === 0) throw new Error("No language server supports workspace/willRenameFiles for these paths");
+  if (!replies.length) throw new Error("No language server supports workspace/willRenameFiles for these paths");
   return replies;
+}
+
+function flattenWorkspaceTextEdits(edit) {
+  if (edit.changes) return Object.entries(edit.changes);
+  return (edit.documentChanges ?? []).map(operation => [operation.textDocument.uri, operation.edits]);
+}
+
+function applyTextEditsToString(text, edits) {
+  const offsets = [0];
+  for (let index = text.indexOf("\n"); index >= 0; index = text.indexOf("\n", index + 1)) offsets.push(index + 1);
+  const indexOf = position => offsets[position.line] + position.character;
+  const ranges = edits.map(({ range, newText }) => ({
+    start: indexOf(range.start), end: indexOf(range.end), newText,
+  })).sort((a, b) => a.start - b.start || a.end - b.end);
+  const parts = [];
+  let offset = 0;
+  for (const range of ranges) {
+    if (range.start < offset) throw new Error("Language server returned overlapping text edits");
+    parts.push(text.slice(offset, range.start), range.newText);
+    offset = range.end;
+  }
+  parts.push(text.slice(offset));
+  return parts.join("");
 }
 
 function validateDocumentEdits({ edit, client, name }) {
   if (edit === null || edit === undefined) return;
-  const encoding = client.serverCapabilities?.positionEncoding;
+  const encoding = client.capabilities.positionEncoding;
   if (encoding && encoding !== "utf-16") throw new Error(`${name} uses unsupported position encoding ${encoding}`);
   if (typeof edit !== "object" || Array.isArray(edit) || (edit.changes && edit.documentChanges)) {
     throw new Error(`${name} returned an ambiguous WorkspaceEdit`);
@@ -147,16 +139,14 @@ function validateRanges(snapshot, edits) {
   }
 }
 
-export async function renamePreview(root, agentDir, request) {
+export async function renamePreview(definitions, root, agentDir, request, signal, connect) {
   const startedAt = Date.now();
   const applyRoot = renameApplyRoot(root);
   const source = readRenameSnapshot(root, request.file, startedAt);
   const target = request.action === "rename-file-preview" ? checkRenameDestination(root, source.name, request.new_name) : undefined;
-  const config = getConfig(root);
-  const signal = AbortSignal.timeout(request.timeout * 1000);
   const replies = target
-    ? await fileEdits(config, root, source, target, signal)
-    : await symbolEdit(config, root, source, request, signal);
+    ? await fileEdits(definitions, root, source, target, signal, connect)
+    : await symbolEdit(definitions, root, source, request, signal, connect);
   const byUri = new Map();
   for (const reply of replies) {
     validateDocumentEdits(reply);

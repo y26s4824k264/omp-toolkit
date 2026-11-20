@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
 import {
-  access, chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir,
+  access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir,
   stat, symlink, writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -15,18 +15,27 @@ import { parseArgs } from "node:util";
 const packageName = "omp-toolkit";
 const serverName = "omp-toolkit-mcp";
 const repo = "y26s4824k264/" + packageName;
-const upstreamVersion = "19.0.0";
-const upstreamCommit = "57771ae562b9345e0579bceb2d68d585e3e6927e";
-const platforms = { darwin: "macos", linux: "linux", win32: "windows" };
-const arches = { x64: "x86_64", arm64: "arm64" };
 const versionPattern = /^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
 const windows = process.platform === "win32";
 const exe = windows ? ".exe" : "";
 const marker = ".omp-toolkit-install.json";
+const instructionsFile = "AGENT-INSTRUCTIONS.md";
+const instructionsStart = "<!-- omp-toolkit:start -->";
+const instructionsEnd = "<!-- omp-toolkit:end -->";
+const instructions = [
+  "## OMP Toolkit",
+  "",
+  "- For short commands and basic lookups, call the native tools directly. Use `rg` for file and text search and `git` for repository state and diffs.",
+  "- For a code question with several keywords and no known file, use `omp-refactor ranked-find \"keywords\"` to rank files and read the matching lines.",
+  "- Prefer the `omp` MCP server for structural search and edits. Use `ast_find` for syntax matches, `ast_preview` for rewrites, and `hashline_read` / `hashline_preview` for exact-line changes. Inspect the saved full patch and run `git apply --check` before applying. Refresh the preview when source files change.",
+  "- Run multi-step shell work in a task-specific persistent PTY through `omp-shell`. Use `omp-shell run-log -- COMMAND ARGS...` to retain the original log and exit code for long commands. Use `log_minimize` for logs already on disk.",
+  "- Use `omp-lsp check` for available language-server diagnostics. Treat missing servers, timeouts, and incomplete reports as unverified. Use `service_ready` for loopback or launch-log checks.",
+  "",
+].join("\n");
 
 const usage = "Usage: node install-release.mjs [--version vX.Y.Z|latest] [--prefix DIR]\n"
-  + "       [--client auto|none|codex|claude] [--omp-bin FILE] [--with-lsp-servers]\n"
-  + "       [--archive FILE --checksum FILE] [--portable-node FILE]\n";
+  + "       [--client auto|none|codex|claude] [--without-lsp-servers]\n"
+  + "       [--archive FILE --checksum FILE] [--portable-node FILE] [--npm-cli FILE]\n";
 
 function run(command, args, options = {}) {
   return spawnSync(command, args, {
@@ -151,51 +160,9 @@ function extract(file, destination) {
   checked(tar, ["-xf", file, "-C", destination]);
 }
 
-function knownOmp(file) {
-  if (!isAbsolute(file)) return false;
-  const result = run(file, ["--version"], { timeout: 10_000 });
-  return result.status === 0 && result.stdout.trim() === "omp/" + upstreamVersion;
-}
-
 function within(parent, file) {
   const path = relative(parent, file);
   return path !== "" && path !== ".." && !path.startsWith(".." + sep) && !isAbsolute(path);
-}
-
-async function engine(options, stage, prefix) {
-  const binary = "omp" + exe;
-  const relativeDestination = join("runtime", binary);
-  const managed = join(prefix, relativeDestination);
-  const candidates = options["omp-bin"] ? [resolve(options["omp-bin"])] : [
-    managed,
-    join(homedir(), ".omp", "bin", upstreamVersion, binary),
-    join(homedir(), ".omp", "bin", binary),
-    join(homedir(), ".local", "bin", binary),
-    ...(process.env.PATH ?? "").split(delimiter).filter(isAbsolute).map(path => join(path, binary)),
-  ];
-  const selected = candidates.find(knownOmp);
-  if (selected) {
-    const file = await realpath(selected);
-    if (!within(prefix, file)) return file;
-    await addExecutable(file, join(stage, relativeDestination));
-    return managed;
-  }
-  if (options["omp-bin"]) throw new Error("--omp-bin must point to a working Oh My Pi " + upstreamVersion);
-
-  const host = platforms[process.platform] + "-" + arches[process.arch];
-  const url = "https://build.stencil.so/api/products/omp/versions/" + upstreamVersion + "/" + host;
-  const manifest = await (await request(url, 30_000)).json();
-  const expectedFile = "omp-" + process.platform.replace("win32", "windows") + "-" + process.arch + exe;
-  if (manifest.build?.version !== upstreamVersion || manifest.build.commit !== upstreamCommit
-    || manifest.file?.name !== expectedFile || !/^[0-9a-f]{64}$/i.test(manifest.file.sha256)) {
-    throw new Error("Oh My Pi build manifest does not match the pinned release");
-  }
-  const file = join(stage, relativeDestination);
-  await download(manifest.download, file);
-  if (!windows) await chmod(file, 0o755);
-  await verify(file, manifest.file.sha256);
-  if (!knownOmp(file)) throw new Error("The downloaded Oh My Pi binary could not start");
-  return managed;
 }
 
 async function addExecutable(from, to) {
@@ -213,26 +180,17 @@ function psQuote(value) {
 
 async function writeLaunchers(stage, prefix, node) {
   const launchers = [
-    ["omp-lsp", ["lsp/omp-lsp.mjs", "OMP_LSP_BIN"]],
-    ["omp-debug", ["debug/omp-debug.mjs", "OMP_DEBUG_BIN"]],
-    ["codex-context-stats", ["stats/codex-context-stats.mjs"]],
+    ["omp-lsp", "lsp/omp-lsp.mjs"],
+    ["omp-debug", "debug/omp-debug.mjs"],
+    ["codex-context-stats", "stats/codex-context-stats.mjs"],
   ];
   const dispatcher = [
-    'import { readFileSync } from "node:fs";',
     'import { fileURLToPath } from "node:url";',
     "const launchers = new Map(" + JSON.stringify(launchers) + ");",
     'if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Node.js 24 or later is required");',
     "const selected = launchers.get(process.argv[2]);",
     'if (!selected) throw new Error("Unknown toolkit command");',
-    "const [modulePath, variable] = selected;",
-    "if (variable && !process.env[variable]) {",
-    '  const config = JSON.parse(readFileSync(new URL("../mcp-config.json", import.meta.url), "utf8"));',
-    "  const args = config.mcpServers.omp.args;",
-    '  const index = args.indexOf("--omp");',
-    '  if (index < 0 || !args[index + 1]) throw new Error("Missing Oh My Pi path in the install configuration");',
-    "  process.env[variable] = args[index + 1];",
-    "}",
-    "const entry = new URL(modulePath, import.meta.url);",
+    "const entry = new URL(selected, import.meta.url);",
     "process.argv.splice(1, 2, fileURLToPath(entry));",
     "await import(entry);",
     "",
@@ -251,35 +209,29 @@ async function writeLaunchers(stage, prefix, node) {
   }
 }
 
-async function languageServers(options, prefix, stage) {
-  const relativeServers = join("runtime", "lsp", "servers");
-  const destination = join(stage, relativeServers);
-  const previous = join(prefix, relativeServers);
+async function languageServers(options, stage) {
+  if (options["without-lsp-servers"]) return;
+  const destination = join(stage, "runtime", "lsp", "servers");
   const args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"];
-  if (options["with-lsp-servers"]) {
-    const nodeDirectory = dirname(process.execPath);
-    const npmCandidates = [
+  const nodeDirectory = dirname(process.execPath);
+  const npmCandidates = options["npm-cli"]
+    ? [resolve(options["npm-cli"])]
+    : [
       join(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js"),
       join(dirname(nodeDirectory), "lib", "node_modules", "npm", "bin", "npm-cli.js"),
     ];
-    const npmFiles = await Promise.all(npmCandidates.map(state));
-    const npmCli = npmCandidates[npmFiles.findIndex(file => file?.isFile())];
-    if (npmCli) checked(process.execPath, [npmCli, ...args], { cwd: destination, stdio: "inherit", timeout: 300_000 });
-    else if (!windows) checked("npm", args, { cwd: destination, stdio: "inherit", timeout: 300_000 });
-    else throw new Error("--with-lsp-servers requires npm from an installed Node.js distribution");
-    return;
+  if (windows && !options["npm-cli"]) {
+    for (const path of (process.env.PATH ?? "").split(delimiter).filter(isAbsolute)) {
+      npmCandidates.push(join(path, "node_modules", "npm", "bin", "npm-cli.js"));
+    }
   }
-  const existing = join(previous, "node_modules");
-  if (!(await state(existing))?.isDirectory()) return;
-  const oldLock = join(previous, "package-lock.json");
-  if ((await state(oldLock))?.isFile()
-    && (await readFile(oldLock)).equals(await readFile(join(destination, "package-lock.json")))) {
-    await cp(existing, join(destination, "node_modules"), {
-      recursive: true, verbatimSymlinks: true, force: false, errorOnExist: true,
-    });
-    return;
-  }
-  console.error("The optional language-server lockfile changed. Re-run with --with-lsp-servers to update.");
+  const npmFiles = await Promise.all(npmCandidates.map(state));
+  const npmCli = npmCandidates[npmFiles.findIndex(file => file?.isFile())];
+  const runtime = { cwd: destination, stdio: "inherit", timeout: 300_000 };
+  if (npmCli) checked(process.execPath, [npmCli, ...args], runtime);
+  else if (options["npm-cli"]) throw new Error("npm CLI not found: " + options["npm-cli"]);
+  else if (!windows) checked("npm", args, runtime);
+  else throw new Error("This install requires npm or --without-lsp-servers");
 }
 
 async function protectPrefix(prefix) {
@@ -289,7 +241,7 @@ async function protectPrefix(prefix) {
   const entries = await readdir(prefix);
   if (entries.length === 0) return true;
   const file = join(prefix, marker);
-  const owned = new Set(["bin", "runtime", "mcp-config.json", "vscode-mcp.json", marker]);
+  const owned = new Set(["bin", "runtime", "mcp-config.json", "vscode-mcp.json", instructionsFile, marker]);
   if (entries.every(entry => owned.has(entry))
     && (await state(file))?.isFile()
     && JSON.parse(await readFile(file, "utf8")).name === packageName) return true;
@@ -347,6 +299,92 @@ async function locateClient(client) {
   return undefined;
 }
 
+function clientHome(client, installDirectory) {
+  if (client === "codex") {
+    return resolve(installDirectory, process.env.CODEX_HOME || join(homedir(), ".codex"));
+  }
+  return resolve(installDirectory, process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"));
+}
+
+async function instructionPath(client, home) {
+  if (client === "claude") return join(home, "CLAUDE.md");
+  const override = join(home, "AGENTS.override.md");
+  const exists = await state(override);
+  if (exists && (!exists.isFile() || (await readFile(override, "utf8")).trim())) return override;
+  return join(home, "AGENTS.md");
+}
+
+function managedInstructions(previous) {
+  const starts = [...previous.matchAll(/^<!-- omp-toolkit:start -->\r?$/gm)];
+  const ends = [...previous.matchAll(/^<!-- omp-toolkit:end -->\r?$/gm)];
+  const eol = previous.includes("\r\n") ? "\r\n" : "\n";
+  let block = [instructionsStart, instructions.trimEnd(), instructionsEnd].join("\n").replace(/\n/g, eol);
+  if (!starts.length && !ends.length) {
+    let separator = previous && !previous.endsWith(eol + eol) ? eol : "";
+    if (previous && !previous.endsWith(eol)) separator += eol;
+    return previous + separator + block + eol;
+  }
+  if (starts.length !== 1 || ends.length !== 1 || starts[0].index >= ends[0].index) {
+    throw new Error("The existing OMP Toolkit instruction markers are incomplete or duplicated");
+  }
+  if (ends[0][0].endsWith("\r")) block += "\r";
+  return previous.slice(0, starts[0].index) + block + previous.slice(ends[0].index + ends[0][0].length);
+}
+
+async function writeManagedInstructions(file) {
+  const original = await state(file);
+  if (original && !original.isFile()) throw new Error("The global instruction path is not a regular file");
+  const originalBytes = original ? await readFile(file) : Buffer.alloc(0);
+  const previous = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(originalBytes);
+  const updated = managedInstructions(previous);
+  if (updated === previous) return;
+  const directory = dirname(file);
+  await mkdir(directory, { recursive: true });
+  const temp = await mkdtemp(join(directory, ".omp-instructions-"));
+  const staged = join(temp, "instructions.md");
+  try {
+    await writeFile(staged, updated, { mode: 0o600 });
+    if (original && !windows) await chmod(staged, original.mode & 0o777);
+    const current = await state(file);
+    if (Boolean(original) !== Boolean(current)
+      || (current && (!current.isFile() || current.mode !== original.mode || current.ino !== original.ino
+        || !(await readFile(file)).equals(originalBytes)))) {
+      throw new Error("The global instruction file changed while it was being updated");
+    }
+    await rename(staged, file);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
+function matchesClientEntry(entry, config) {
+  return entry?.command === config.command && (entry.type === undefined || entry.type === "stdio")
+    && Array.isArray(entry.args) && entry.args.length === config.args.length
+    && entry.args.every((arg, index) => arg === config.args[index]);
+}
+
+async function clientInstructions(client, directory, config, result, explicit) {
+  try {
+    const home = clientHome(client, directory);
+    let entry;
+    if (client === "codex") {
+      const found = JSON.parse(result.stdout);
+      if (found.enabled !== false) entry = found.transport;
+    } else {
+      const file = process.env.CLAUDE_CONFIG_DIR ? join(home, ".claude.json") : join(homedir(), ".claude.json");
+      if (await state(file)) entry = JSON.parse(await readFile(file, "utf8")).mcpServers?.omp;
+    }
+    if (!matchesClientEntry(entry, config)) return;
+    const file = await instructionPath(client, home);
+    await writeManagedInstructions(file);
+    console.log("OMP Toolkit guidance: " + file);
+  } catch (error) {
+    console.error("Could not update " + client + " instructions: " + error.message);
+    console.error("Copy the guidance from " + join(directory, instructionsFile));
+    if (explicit) process.exitCode = 1;
+  }
+}
+
 async function configureClient(client, config, directory, explicit) {
   const quote = windows ? psQuote : shQuote;
   const add = clientCommand(client, config);
@@ -374,6 +412,7 @@ async function configureClient(client, config, directory, explicit) {
   const result = run(binary, [...entry, ...lookup], { cwd: directory, timeout: 12_000 });
   if (result.status === 0) {
     console.log(client + " already has an 'omp' entry. It has been left in place.");
+    await clientInstructions(client, directory, config, result, explicit);
     return true;
   }
   const absent = client === "codex"
@@ -383,6 +422,11 @@ async function configureClient(client, config, directory, explicit) {
     const added = run(binary, [...entry, ...add], { cwd: directory, stdio: "inherit", timeout: 30_000 });
     if (added.status === 0) {
       console.log("Connected omp to " + client + ".");
+      const installed = client === "codex"
+        ? run(binary, [...entry, ...lookup], { cwd: directory, timeout: 12_000 }) : result;
+      if (client !== "codex" || installed.status === 0) {
+        await clientInstructions(client, directory, config, installed, explicit);
+      }
       return true;
     }
   }
@@ -399,9 +443,12 @@ function defaultPrefix() {
 }
 
 async function install(options) {
-  if (!platforms[process.platform] || !arches[process.arch]) throw new Error("Unsupported platform or architecture");
+  if (!["darwin", "linux", "win32"].includes(process.platform) || !["x64", "arm64"].includes(process.arch)) {
+    throw new Error("Unsupported platform or architecture");
+  }
   if (options.version !== "latest" && !versionPattern.test(options.version)) throw new Error("Invalid --version");
   if (!["auto", "none", "codex", "claude"].includes(options.client)) throw new Error("Invalid --client");
+  if (options["with-lsp-servers"] && options["without-lsp-servers"]) throw new Error("Choose one LSP installation mode");
   if (Boolean(options.archive) !== Boolean(options.checksum)) throw new Error("--archive and --checksum must be used together");
   const requested = resolve(options.prefix ?? defaultPrefix());
   if (requested === dirname(requested)) throw new Error("The install prefix must not be a filesystem root");
@@ -441,21 +488,21 @@ async function install(options) {
       await addExecutable(source, join(stage, portable));
       node = join(prefix, portable);
     }
-    const omp = await engine(options, stage, prefix);
-    await languageServers(options, prefix, stage);
+    await languageServers(options, stage);
     await writeLaunchers(stage, prefix, node);
     if (!windows) await symlink(serverName, join(stage, "bin", "omp-codex-mcp"));
 
     const bin = join(prefix, "bin");
     const config = {
       command: join(bin, serverName + exe),
-      args: ["--bin-dir", bin, "--omp", omp, "--node", node,
+      args: ["--bin-dir", bin, "--node", node,
         "--profile-helper", join(prefix, "runtime", "profile", "summary.mjs")],
     };
     await writeFile(join(stage, "mcp-config.json"), JSON.stringify({ mcpServers: { omp: config } }, null, 2) + "\n");
     await writeFile(join(stage, "vscode-mcp.json"), JSON.stringify({
       servers: { omp: { type: "stdio", ...config } },
     }, null, 2) + "\n");
+    await writeFile(join(stage, instructionsFile), instructions);
     await writeFile(join(stage, marker), JSON.stringify({ name: packageName, version }) + "\n");
 
     const backup = join(temp, "previous");
@@ -475,6 +522,7 @@ async function install(options) {
     console.log("Installed " + packageName + " " + version + " in " + prefix);
     console.log("MCP configuration: " + join(prefix, "mcp-config.json"));
     console.log("VS Code MCP configuration: " + join(prefix, "vscode-mcp.json"));
+    console.log("Agent instructions: " + join(prefix, instructionsFile));
     console.log(windows
       ? "$env:Path = " + psQuote(bin + ";") + " + $env:Path"
       : "export PATH=" + shQuote(bin) + ':"$PATH"');
@@ -501,9 +549,10 @@ try {
     version: { type: "string", default: "latest" },
     prefix: { type: "string" },
     client: { type: "string", default: "auto" },
-    "omp-bin": { type: "string" },
     "portable-node": { type: "string" },
+    "npm-cli": { type: "string" },
     "with-lsp-servers": { type: "boolean" },
+    "without-lsp-servers": { type: "boolean" },
     archive: { type: "string" },
     checksum: { type: "string" },
     help: { type: "boolean", short: "h" },

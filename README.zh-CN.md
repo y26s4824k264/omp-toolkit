@@ -2,13 +2,13 @@
 
 [English](README.md) · 简体中文
 
-在 WorkBuddy、Codex、Claude 等编程智能体和终端中使用 Oh My Pi 的 AST、Hashline、Shell、LSP 与调试能力。MCP 服务以本地 stdio 运行，提供源码读取、诊断和补丁预览。`omp-refactor` 将补丁写到标准输出，诊断写到标准错误。审阅后用 Git 应用补丁。
+在 WorkBuddy、Codex、Claude 等编程智能体和终端中使用独立的 AST、Hashline、Shell、LSP 与调试工具。MCP 服务以本地 stdio 运行，提供源码读取、日志检查和补丁预览。`omp-refactor` 直接生成补丁，诊断写到标准错误。审阅后用 Git 应用补丁。
 
-上游版本为 [v19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0)，提交为 `57771ae562b9345e0579bceb2d68d585e3e6927e`。本目录含上游 Rust 引擎及依赖源码，保留许可证。`src/` 中是独立命令的适配层。
+Rust 引擎和语言服务器默认配置提取自 [Oh My Pi v19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0)，构建来源固定在 `57771ae562b9345e0579bceb2d68d585e3e6927e`。安装后的工具可独立运行，无需启动 Oh My Pi 或登录模型账户。
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/y26s4824k264/omp-toolkit/releases/latest) 下载并运行适合当前系统的脚本。安装器按架构选择发行包并校验 SHA-256。已安装的 Node.js 24+ 和 Oh My Pi 19.0.0 可以复用，缺少时从上游下载并校验。应用补丁和执行 Git 相关操作时需要 Git。
+从 [GitHub Releases](https://github.com/y26s4824k264/omp-toolkit/releases/latest) 下载并运行适合当前系统的脚本。安装器校验发行包的 SHA-256，复用兼容的 Node.js 与 npm 或下载并校验官方运行时，并安装锁定版本的常见语言服务器。检查和应用补丁、LSP 重命名预览时使用 Git。
 
 也可以把下面这句话交给当前的编程智能体执行。
 
@@ -20,7 +20,7 @@
 curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.sh && bash install.sh
 ```
 
-默认安装到 `$HOME/.local/omp-toolkit`。用 `--prefix DIR` 指定目录，用 `--version v0.2.0` 固定版本，用 `--omp-bin FILE` 指定已有的 Oh My Pi 19.0.0。选装通用语言服务器时，先在 `PATH` 中准备带 npm 的 Node.js 24+，再传 `--with-lsp-servers`。
+默认安装到 `$HOME/.local/omp-toolkit`。可用 `--prefix DIR` 指定目录、`--version v0.2.0` 固定版本，或用 `--without-lsp-servers` 跳过常见语言服务器的安装。
 
 **Windows PowerShell 5.1 或更新版本**
 
@@ -29,9 +29,9 @@ Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/r
 & .\install.ps1
 ```
 
-默认安装到 `%LOCALAPPDATA%\OMP Toolkit`。对应参数包括 `-Prefix DIR`、`-Version v0.2.0`、`-OmpBin FILE` 和 `-WithLspServers`。若机器策略限制运行下载的 PowerShell 脚本，请按本机或组织的流程审核并允许运行。
+默认安装到 `%LOCALAPPDATA%\OMP Toolkit`。对应参数包括 `-Prefix DIR`、`-Version v0.2.0` 和 `-WithoutLspServers`。若机器策略限制运行下载的 PowerShell 脚本，请按本机或组织的流程审核并允许运行。
 
-安装器会检测本机可用的 Codex 和 Claude Code 命令，为检测到的客户端添加 MCP 配置。已有的 `omp` 配置保留。仅需工具和配置文件时，macOS/Linux 用 `--client none`，Windows 用 `-Client none`。需要指定单个客户端时，把参数值改为 `codex` 或 `claude`。可按脚本输出将工具的 `bin` 目录加入当前终端的 `PATH`。
+安装器会检测本机可用的 Codex 和 Claude Code 命令并接入 MCP。客户端的 `omp` 条目指向本次安装时，安装器也会把带标记的工具优先规则追加到全局指令。仅需工具和配置文件时，macOS/Linux 用 `--client none`，Windows 用 `-Client none`。按脚本输出可将 `bin` 目录加入当前终端的 `PATH`。
 
 新版本的默认安装目录与 `v0.1.0` 源码版分开。切换到新安装时，将客户端中旧的 `omp` 条目换成新生成的条目。安装器无法自动接入时会打印可在终端执行的命令。
 
@@ -59,6 +59,8 @@ macOS 预编译包使用系统自带的 `open` 打开文件和网址。
 ## 接入编程智能体
 
 安装器在安装目录中生成 `mcp-config.json` 和 `vscode-mcp.json`，文件中的启动命令和参数已填入本机绝对路径。手动配置时只把 `omp` 条目合并到对应的服务器对象。运行在云端的会话需要能访问运行该工具的执行环境。
+
+客户端需要手动设置工具偏好时，可把安装目录里的 `AGENT-INSTRUCTIONS.md` 复制到其全局指令。
 
 | 智能体 | 接入步骤 |
 | --- | --- |
@@ -110,7 +112,7 @@ PUT 12.=12:
 
 ## 从源码构建
 
-已有 [Oh My Pi 19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0#install) 的 macOS 或 Linux 用户，也可以用源码安装器。需要 Git、Rustup、系统编译工具、Node.js 24+，以及选装语言服务器所需的 npm。
+macOS 和 Linux 源码安装需要 Git、Rustup、系统编译工具和 Node.js 24+。使用源码安装器装常见语言服务器时还需要 npm。
 
 ```sh
 git clone https://github.com/y26s4824k264/omp-toolkit.git
@@ -161,12 +163,14 @@ cargo build --locked --profile ci -p omp-shell --bin obash
 
 Shell 二进制位于 `target/ci/examples/omp_shell_cli`，安装时命名为 `omp-shell`。原版 `obash` 位于 `target/ci/obash`。
 
+用 `omp-shell process-tree PID --depth 2 --json` 查看长任务和子进程。输出包含进程编号和状态，省略命令行参数。
+
 ## 其他可独立使用的能力
 
-- `omp toks FILE --json` 用本地 tokenizer 统计文件内容，可比较多种模型编码。Codex 首轮输入用量仍以实际请求日志为准。
+- `omp-refactor ranked-find 'request timeout retry' --limit 8` 按关键词覆盖和稀有程度给文件排序，返回路径和命中行。精确查询继续用 `rg`。
+- `omp-refactor token-count FILE` 用 `o200k_base`、`cl100k_base` 和四种 Claude 编码离线估算文件 token。Codex 实际输入用量以会话日志为准。
 - `omp read FILE:5-12` 和 `omp grep PATTERN PATH --limit 20` 可以直接处理本地文件。项目内的一般定位继续用 `rg`。
 - OMP 的 `omp-diff` 和 `omp-xfs` 已作为编辑引擎依赖随源码抽取，可用于下一次需要 Rust 差异计算或文件扫描的工具。
-- 代理调度、跨会话历史、会话压缩和 TUI 由 OMP 宿主管理。
 
 ## MCP 工具
 
@@ -193,12 +197,12 @@ stdio MCP 启动命令为 `omp-toolkit-mcp`。在 Codex 的工具发现中搜索
 
 结果过长时按返回的 `Full JSON` 路径读所需字段。需要改写时，`ast_preview` 和 `hashline_preview` 返回的 `Full patch` 指向完整补丁。审阅后在项目根先执行 `git apply --check -- "$patch"`，再执行 `git apply -- "$patch"`。源文件变化后重新预览。失败日志和超过 4 MiB 的日志会直接取原始头尾，其余日志使用 OMP 的命令过滤器。
 
-终端用 `omp-refactor ast-find`、`ast`、`read-summary`、`read`、`hashline` 对应代码工具，用 `obash --json=native -c '…'` 解析 Bash，用 `omp-shell minimize` 摘要已有日志，用 `omp toks FILE --json` 估算文件 token。手动从源码构建后，可用下面的命令接入 Codex。
+终端用 `omp-refactor ast-find`、`ast`、`read-summary`、`read`、`hashline` 和 `token-count`，用 `obash --json=native -c '…'` 解析 Bash，用 `omp-shell minimize` 摘要已有日志。手动从源码构建后，可用下面的命令接入 Codex。
 
 ```sh
 cargo build --release --locked -p omp-refactor --bin omp-toolkit-mcp
 codex mcp add omp -- /absolute/path/to/omp-toolkit-mcp \
-  --bin-dir /absolute/directory/with/native-tools --omp /absolute/path/to/omp \
+  --bin-dir /absolute/directory/with/native-tools \
   --node /absolute/path/to/node --profile-helper /absolute/path/to/profile/summary.mjs
 ```
 
@@ -218,7 +222,7 @@ codex mcp add omp -- /absolute/path/to/omp-toolkit-mcp \
 
 ### 多语言诊断与导航
 
-`omp-lsp` 通过随命令安装的扩展直接调用已安装 OMP 19.0.0 的 LSP 引擎。`catalog` 列出 OMP 原生的全部 55 个服务器定义。`status` 显示当前项目的配置解析情况。项目根标记、项目本地二进制和项目级 LSP 配置按 OMP 规则解析。一次 `check` 可以检查多个明确列出的文件，并在本次调用内复用服务器。退出码 `0` 表示收到报告且无错误，`1` 表示报告中有错误，`2` 表示调用失败或报告不完整。
+`omp-lsp` 直接启动语言服务器并走 LSP stdio。`catalog` 列出抽取的 55 个服务器定义，`status` 显示当前项目配置。一次 `check` 可以检查多个明确列出的文件并复用服务器。退出码 `0` 表示收到报告且无错误，`1` 表示报告中有错误，`2` 表示调用失败或报告不完整。
 
 ```sh
 omp-lsp --json catalog | jq -r '.servers[].name'
@@ -227,9 +231,11 @@ omp-lsp --root /absolute/project check src/main.ts src/helper.ts
 omp-lsp --root /absolute/project definition src/main.ts --line 12 --symbol load
 ```
 
-`lsp/` 中的运行模块须放在同一目录。命令需要 Node 24 和 OMP 19.0.0。可在 `lsp/servers` 目录内运行 `npm ci --ignore-scripts` 安装锁定的通用服务器依赖。引擎优先解析项目本地依赖，再查看随 `omp-lsp` 安装的 `servers/node_modules/.bin` 和系统 PATH。JSON、CSS、SCSS 和 Less 验证默认开启，文件诊断跳过只提供补全的 Emmet，项目配置可覆盖这些默认值。Bash 的 lint 诊断需要 PATH 中的 ShellCheck。各服务器需要对应语言工具链和项目配置，冷启动可用 `--timeout` 延长。文件级 LSP 反馈用于辅助判断，项目级构建和测试仍按项目要求执行。
+`lsp/` 运行模块放在一起，使用 Node.js 24+。手工安装常见语言服务器时，可在 `lsp/servers` 目录运行 `npm ci --ignore-scripts`。工具依次查询项目依赖、已安装的服务器和 `PATH`。Bash lint 诊断使用可用的 ShellCheck，Go 和 Rust 使用项目选定的工具链。冷启动可用 `--timeout` 延长，构建和测试仍按项目要求执行。
 
 ### 语义重命名预览
+
+项目语言服务器配置依次读取 `.omp/lsp.json`、`.lsp.json` 和 `lsp.json`，后者覆盖前者。原先存于 Oh My Pi 用户配置或 YAML 的设置可移入项目 JSON。
 
 `rename-preview` 让项目语言服务器定位符号的定义和实际引用。`rename-file-preview` 预览文件移动及语言服务器给出的导入更新。目标只含文件名时沿用源文件目录，多级路径相对于项目根。两项在 macOS 的 Git 工作树中生成完整 Git 补丁，默认写到私有临时文件，也可用 `--patch` 指定新文件。`--json` 返回补丁路径、预览和 Git 应用目录 `apply_root`。支持范围取决于项目语言服务器提供的重命名能力。
 
@@ -246,7 +252,7 @@ omp-lsp --root /absolute/project rename-file-preview src/config.ts --new-name se
 
 ### 多轮断点调试
 
-`omp-debug` 通过 OMP 19.0.0 的原生 DAP 调试器复用一个任务的断点、调用栈和变量状态。持久会话支持 macOS 和 Linux，需要 Node 24 和目标语言的调试适配器。macOS C/C++ 可使用 Xcode 或 Command Line Tools 提供的 `lldb-dap`。
+`omp-debug` 与适配器直接走 DAP，保留一个任务的断点、调用栈和变量状态。macOS 和 Linux 持久会话需要 Node.js 24 和目标语言的调试适配器。macOS C/C++ 可使用 Xcode 或 Command Line Tools 提供的 `lldb-dap`。
 
 将 `debug/omp-debug.mjs`、`debug/bridge.mjs` 和 `debug/protocol.mjs` 安装在同一目录，再将 `omp-debug.mjs` 以 `omp-debug` 的名称链接到 PATH 中。
 

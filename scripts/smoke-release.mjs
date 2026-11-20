@@ -14,7 +14,7 @@ const suffix = windows ? '.exe' : '';
 const asset = `omp-toolkit-${process.platform}-${process.arch}.${windows ? 'zip' : 'tar.gz'}`;
 const archive = join(repo, 'target', 'distribution', asset);
 const version = /^version = "([^"]+)"/m.exec(readFileSync(join(repo, 'Cargo.toml'), 'utf8'))[1];
-const temp = realpathSync(mkdtempSync(join(tmpdir(), 'omp-release-')));
+const temp = realpathSync.native(mkdtempSync(join(tmpdir(), 'omp-release-')));
 const prefix = join(temp, 'Tool Kit');
 const checksum = join(temp, 'SHA256SUMS');
 const project = join(temp, 'Fixture Project');
@@ -35,7 +35,8 @@ function launchInstalled(name, args) {
 }
 
 async function smokeMcp(config) {
-    assert.equal(config.command, join(prefix, 'bin', 'omp-toolkit-mcp' + suffix));
+    assert.equal(realpathSync.native(config.command),
+        realpathSync.native(join(prefix, 'bin', 'omp-toolkit-mcp' + suffix)));
     const server = spawn(config.command, config.args, {
         stdio: ['pipe', 'pipe', 'inherit'],
         signal: AbortSignal.timeout(90_000),
@@ -106,7 +107,9 @@ async function smokeMcp(config) {
         assert.match(await call('log_minimize', {
             root, file: 'server.log', exit_code: 0, command: 'printf READY',
         }), /READY/);
-        assert.match(await call('token_count', { root, file }), /o200k/);
+        const counts = JSON.parse(await call('token_count', { root, file }));
+        assert.equal(counts.encodings.length, 6);
+        assert.ok(counts.encodings.some(item => item.name === 'o200k_base'));
         const readiness = await call('service_ready', {
             root, log: 'server.log', log_pattern: 'READY', log_offset: 0, pid: process.pid,
         });
@@ -132,7 +135,6 @@ try {
     assert.notEqual(corrupt.status, 0);
     assert.match((corrupt.stderr || '') + (corrupt.stdout || ''), /checksum|sha.?256/i);
     writeFileSync(checksum, `${sha256}  ${asset}\n`);
-    if (process.env.OMP_TEST_HOST) args.push('--omp-bin', process.env.OMP_TEST_HOST);
     run(process.execPath, args, { cwd: repo, stdio: 'inherit' });
     if (!windows) assert.match(run(join(prefix, 'bin', 'omp-codex-mcp'), ['--version']), /omp-toolkit-mcp/);
 
@@ -149,8 +151,17 @@ try {
     assert.deepEqual(vscode, { ...config, type: 'stdio' });
     await smokeMcp(config);
 
+    const ranked = JSON.parse(run(join(prefix, 'bin', 'omp-refactor' + suffix), [
+        '--root', project, 'ranked-find', 'oldCall result', '--limit', '2',
+    ]));
+    assert.equal(ranked.results[0].path, file);
+
     const catalog = JSON.parse(launchInstalled('omp-lsp', ['--json', 'catalog']));
     assert.equal(catalog.servers.length, 55);
+    writeFileSync(join(project, 'invalid.json'), '{"missing":}\n');
+    assert.throws(() => launchInstalled('omp-lsp', [
+        '--root', project, '--json', 'check', 'invalid.json',
+    ]), error => error.status === 1 && JSON.parse(error.stdout).results[0].status === 'errors');
     launchInstalled('omp-debug', ['--help']);
     launchInstalled('codex-context-stats', ['--help']);
 
@@ -162,6 +173,9 @@ try {
     assert.equal(shellResult.error, undefined);
     assert.equal(shellResult.status, 7, shellResult.stderr);
     assert.match(readFileSync(join(temp, 'exit.log'), 'utf8'), /release fixture/);
+    const tree = JSON.parse(run(shell, ['process-tree', String(process.pid), '--depth', '0', '--json']));
+    assert.equal(tree.processes[0].pid, process.pid);
+    assert.equal(tree.processes[0].status, 'running');
     console.log('Release package and CLI smoke checks: OK');
 } finally {
     for (const patch of createdPatches) rmSync(patch, { force: true });

@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { createConnection } from "node:net";
-import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { parseArgs, stripVTControlCharacters } from "node:util";
+import { parseArgs } from "node:util";
 import { integer, privateSession, readFrame, readyPrefix, removeSession, requestLimit, responseLimit } from "./protocol.mjs";
 
 const help = `Usage: omp-debug --session ABSENT_DIR serve [--root PROJECT] [--idle SECONDS]
@@ -27,6 +25,7 @@ Commands:
 Wait for OMP_DEBUG_READY before sending requests. Responses are JSON.
 The request timeout defaults to 30s. The server's idle timeout defaults to 900s.
 Debug sessions require macOS or Linux with Unix domain sockets.
+Use a target language's stdio debug adapter, such as lldb-dap.
 `;
 
 function sessionLocation(argument) {
@@ -49,24 +48,19 @@ async function serve(location, values) {
   const root = realpathSync(values.root ?? process.cwd());
   if (!statSync(root).isDirectory()) throw new Error(`Expected a project directory: ${root}`);
   const idle = integer(values.idle ?? "900", "--idle", 1, 3600);
-  const agentDir = mkdtempSync(join(tmpdir(), "omp-dap-agent-"));
   let original;
   try {
     mkdirSync(location.directory, { mode: 0o700 });
     original = privateSession(location.directory);
-    const omp = process.env.OMP_DEBUG_BIN ?? join(homedir(), ".omp", "bin", "19.0.0", "omp");
     const bridge = fileURLToPath(new URL("./bridge.mjs", import.meta.url));
     const path = [debuggerPath(), dirname(process.execPath), process.env.PATH].filter(Boolean).join(delimiter);
-    const child = spawn(omp, [
-      "--cwd", root, "--allow-home", "--no-session", "--no-tools", "--no-lsp", "--no-skills", "--no-extensions",
-      "--no-rules", "--no-context-files", "--offline", "--no-judge", "--no-spotlight", "-e", bridge, "-p",
-    ], {
+    const child = spawn(process.execPath, [bridge], {
       cwd: root,
       env: {
-        ...process.env, PATH: path, OMP_PROFILE: "", PI_CONFIG_DIR: "", PI_CODING_AGENT_DIR: agentDir,
+        ...process.env, PATH: path,
         OMP_DEBUG_SOCKET: location.socket, OMP_DEBUG_IDLE: String(idle),
       },
-      stdio: ["ignore", "pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "inherit", "pipe"],
     });
     let ready = false;
     let tail = "";
@@ -91,18 +85,6 @@ async function serve(location, values) {
       tail = text.slice(-readyPrefix.length);
       process.stdout.write(chunk);
     });
-    let watchdogHint = false;
-    createInterface({ input: child.stderr, crlfDelay: Infinity }).on("line", line => {
-      const message = stripVTControlCharacters(line);
-      // OMP still labels the live asynchronous extension as loading at this point.
-      if (ready && /^Still starting after \d+s — phase: (?:.+ > )?loadExtensions$/.test(message)) {
-        watchdogHint = true;
-        return;
-      }
-      const skip = watchdogHint && /^  logs: .* · re-run with PI_DEBUG_STARTUP=1 for streaming phase markers$/.test(message);
-      watchdogHint = false;
-      if (!skip) process.stderr.write(`${line}\n`);
-    });
     process.on("SIGINT", signal);
     process.on("SIGTERM", signal);
     process.on("SIGHUP", signal);
@@ -123,7 +105,6 @@ async function serve(location, values) {
     }
   } finally {
     if (original) removeSession(location, original);
-    rmSync(agentDir, { recursive: true, force: true });
   }
 }
 

@@ -24,10 +24,14 @@ rmcp = { version = "=3.11.0", default-features = false, features = ["macros", "s
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+tiktoken-rs = "=0.12.1"
 tokio.workspace = true
 tokio-util.workspace = true
 omp-ast.workspace = true
+omp-diff.workspace = true
 omp-edit = { path = "crates/edit" }
+omp-offline-claude = { path = "tokenizer/claude" }
+omp-xfs.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

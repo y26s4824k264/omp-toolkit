@@ -1,4 +1,19 @@
 {
+  "tiktoken-rs@0.12.1": {
+    "revision": "72a5a800651a1cea1ad609292446ba02c80e3bcd",
+    "files": [
+      {
+        "name": "LICENSE.tiktoken-rs",
+        "path": "tokenizer/LICENSE.tiktoken-rs",
+        "source": "https://github.com/zurawiki/tiktoken-rs/blob/72a5a800651a1cea1ad609292446ba02c80e3bcd/LICENSE"
+      },
+      {
+        "name": "LICENSE.openai-tiktoken",
+        "path": "tokenizer/LICENSE.openai-tiktoken",
+        "source": "https://github.com/openai/tiktoken/blob/0.14.0/LICENSE"
+      }
+    ]
+  },
   "intl_pluralrules@7.0.2": {
     "revision": "d0715d5b7cca72e228d6e6c4de154bd30dfdd06a",
     "files": [

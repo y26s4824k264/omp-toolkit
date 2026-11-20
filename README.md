@@ -2,13 +2,13 @@
 
 English · [简体中文](README.zh-CN.md)
 
-Use Oh My Pi's AST editing, Hashline, shell, LSP, and debugging tools in WorkBuddy, Codex, Claude, other coding agents, and the terminal. The local stdio MCP server reads source files, reports diagnostics, and previews patches. `omp-refactor` writes patches to stdout and diagnostics to stderr. Review each patch before applying it with Git.
+Use standalone AST editing, Hashline, shell, LSP, and debugging tools in WorkBuddy, Codex, Claude, other coding agents, and the terminal. The local stdio MCP server reads source files, inspects logs, and previews patches. `omp-refactor` generates patches directly and writes diagnostics to stderr. Review each patch before applying it with Git.
 
-The toolkit uses [Oh My Pi v19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0), pinned to `57771ae562b9345e0579bceb2d68d585e3e6927e`. This repository includes the extracted Rust engines and their licenses. The standalone adapters live in `src/`.
+The Rust engines and language-server defaults are extracted from [Oh My Pi v19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0), pinned at build time to `57771ae562b9345e0579bceb2d68d585e3e6927e`. The installed toolkit runs independently of the Oh My Pi application or any model account.
 
 ## Install
 
-Download and run the script for your system from [GitHub Releases](https://github.com/y26s4824k264/omp-toolkit/releases/latest). The installer selects the release archive for your architecture and checks its SHA-256 digest. It reuses Node.js 24+ and Oh My Pi 19.0.0 when available or downloads and verifies them from upstream. Install Git to apply patches and run Git-dependent commands.
+Download and run the script for your system from [GitHub Releases](https://github.com/y26s4824k264/omp-toolkit/releases/latest). The installer checks the archive's SHA-256, reuses a compatible Node.js and npm or downloads a verified copy, and installs the locked common language servers. Git is used to check and apply patches and for LSP rename previews.
 
 You can also give your coding agent this instruction.
 
@@ -20,7 +20,7 @@ You can also give your coding agent this instruction.
 curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.sh && bash install.sh
 ```
 
-The default install directory is `$HOME/.local/omp-toolkit`. Use `--prefix DIR` for a custom directory, `--version v0.2.0` to pin the release, and `--omp-bin FILE` to choose an existing Oh My Pi 19.0.0 executable. To install the optional language servers, first put Node.js 24+ with npm on `PATH`, then pass `--with-lsp-servers`.
+The default install directory is `$HOME/.local/omp-toolkit`. Use `--prefix DIR` for a custom directory, `--version v0.2.0` to pin the release, or `--without-lsp-servers` to skip the bundled list of language servers.
 
 **Windows PowerShell 5.1 or later**
 
@@ -29,9 +29,9 @@ Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/r
 & .\install.ps1
 ```
 
-The default install directory is `%LOCALAPPDATA%\OMP Toolkit`. The options include `-Prefix DIR`, `-Version v0.2.0`, `-OmpBin FILE`, and `-WithLspServers`. If machine policy restricts downloaded PowerShell scripts, follow your machine's or organization's process to review and allow the script.
+The default install directory is `%LOCALAPPDATA%\OMP Toolkit`. The options include `-Prefix DIR`, `-Version v0.2.0`, and `-WithoutLspServers`. If machine policy restricts downloaded PowerShell scripts, follow your machine's or organization's process to review and allow the script.
 
-The installer detects accessible local Codex and Claude Code CLIs and adds the MCP entry to each detected client. Existing `omp` entries stay in place. Use `--client none` on macOS/Linux or `-Client none` on Windows to install the binaries and configuration files only. To target one client, pass `codex` or `claude` to the same option. Use the printed command to add the toolkit's `bin` directory to your current terminal's `PATH`.
+The installer detects accessible local Codex and Claude Code CLIs and adds the MCP entry to each detected client. When the client's `omp` entry points to this installation, setup also adds a marked block of global tool instructions. Existing unrelated entries stay in place. Use `--client none` on macOS/Linux or `-Client none` on Windows for the tools and configuration files only. Use the printed command to add `bin` to your terminal's `PATH`.
 
 The new default install directory is separate from the `v0.1.0` source installation. To switch clients to the new installation, replace the previous `omp` entry with the new one. If the installer cannot configure a client, it prints the command to run in your terminal.
 
@@ -59,6 +59,8 @@ Prebuilt macOS packages use the system `open` command for opening files and URLs
 ## Connect a coding agent
 
 The installer writes `mcp-config.json` and `vscode-mcp.json` in the install directory with absolute paths for the launch command and arguments. When configuring a client manually, merge only the `omp` entry into its server configuration. A cloud session needs access to the execution environment running the tool.
+
+For a client where you set tool preferences manually, copy the generated `AGENT-INSTRUCTIONS.md` into its global instructions.
 
 | Agent | Setup |
 | --- | --- |
@@ -108,7 +110,7 @@ Run `omp-refactor hashline --patch edits.txt src/a.ts` to generate a Git patch. 
 
 ## Build from source
 
-On macOS or Linux, you can use the source installer with [Oh My Pi 19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0#install). You need Git, Rustup, system build tools, and Node.js 24+. Optional language servers also require npm.
+On macOS or Linux, the source installer needs Git, Rustup, system build tools, and Node.js 24+. The common language servers also require npm in this build mode.
 
 ```sh
 git clone https://github.com/y26s4824k264/omp-toolkit.git
@@ -159,12 +161,14 @@ cargo build --locked --profile ci -p omp-shell --bin obash
 
 Install `target/ci/examples/omp_shell_cli` as `omp-shell`. The upstream `obash` binary is `target/ci/obash`.
 
+Use `omp-shell process-tree PID --depth 2 --json` to inspect a long-running task and its child processes. The report includes process IDs and status and omits command-line arguments.
+
 ## Other standalone capabilities
 
-- `omp toks FILE --json` estimates token counts for a local file with several model encodings. Measure actual Codex input usage from the session log.
+- `omp-refactor ranked-find 'request timeout retry' --limit 8` ranks files by keyword coverage and rarity and returns matching lines with their file paths. Use `rg` for exact lookups.
+- `omp-refactor token-count FILE` estimates counts offline with `o200k_base`, `cl100k_base`, and four Claude encodings. Measure actual Codex input usage from the session log.
 - `omp read FILE:5-12` reads local source lines. `omp grep PATTERN PATH --limit 20` searches local text.
 - The extracted Rust engines include `omp-diff` and `omp-xfs` for diffs and file traversal.
-- The Oh My Pi host manages agent orchestration, session history, context compaction, and the TUI.
 
 ## MCP tools
 
@@ -191,12 +195,12 @@ To inspect repeated calls first, call `ast_find`.
 
 For lengthy results, read the needed fields from the returned `Full JSON` path. `ast_preview` and `hashline_preview` return a `Full patch` path. Inspect the complete patch, run `git apply --check -- "$patch"` from the project root, then run `git apply -- "$patch"`. Preview again if the source changes. Failed logs and logs larger than 4 MiB use a head and tail excerpt. Other logs go through OMP's command-aware filter.
 
-The equivalent terminal tools are `omp-refactor ast-find`, `ast`, `read-summary`, `read`, and `hashline`. Use `obash --json=native -c '…'` to parse Bash, `omp-shell minimize` to summarize a log, and `omp toks FILE --json` to estimate tokens. To connect a manual source build to Codex, use absolute paths.
+The equivalent terminal tools are `omp-refactor ast-find`, `ast`, `read-summary`, `read`, `hashline`, and `token-count`. Use `obash --json=native -c '…'` to parse Bash and `omp-shell minimize` to summarize logs. To connect a source build to Codex, use absolute paths.
 
 ```sh
 cargo build --release --locked -p omp-refactor --bin omp-toolkit-mcp
 codex mcp add omp -- /absolute/path/to/omp-toolkit-mcp \
-  --bin-dir /absolute/directory/with/native-tools --omp /absolute/path/to/omp \
+  --bin-dir /absolute/directory/with/native-tools \
   --node /absolute/path/to/node --profile-helper /absolute/path/to/profile/summary.mjs
 ```
 
@@ -216,7 +220,7 @@ Before starting the process, record the existing log length or create a fresh lo
 
 ### Language diagnostics and navigation
 
-`omp-lsp` loads the Oh My Pi 19.0.0 LSP engine through an installed extension. `catalog` lists its 55 built-in server definitions. `status` shows the project configuration. OMP resolves root markers, project binaries, and project-level LSP settings. `check` can reuse a language server across explicitly listed files in one call. Exit code `0` means a report arrived with no errors, `1` means reported errors, and `2` means the check failed or returned an incomplete report.
+`omp-lsp` starts language servers directly over LSP stdio. `catalog` lists the 55 extracted definitions, and `status` reports the project configuration. `check` can reuse a server across explicitly listed files. Exit code `0` means a report arrived with no errors, `1` means reported errors, and `2` means the check failed or returned an incomplete report.
 
 ```sh
 omp-lsp --json catalog | jq -r '.servers[].name'
@@ -225,9 +229,11 @@ omp-lsp --root /absolute/project check src/main.ts src/helper.ts
 omp-lsp --root /absolute/project definition src/main.ts --line 12 --symbol load
 ```
 
-Keep the `lsp/` runtime modules together and use Node.js 24 and Oh My Pi 19.0.0. For a manual install of the optional language servers, run `npm ci --ignore-scripts` in `lsp/servers`. The engine looks for project-local dependencies, then `servers/node_modules/.bin` next to the installed `omp-lsp` and the system `PATH`. JSON, CSS, SCSS, and Less validation are enabled by default. Diagnostics skip the completion-only Emmet server. Project settings may override these defaults. Bash diagnostics require ShellCheck on `PATH`. Each server needs its corresponding language tools and project settings. Increase `--timeout` for a cold start. Follow your project's requirements for builds and tests.
+Keep the `lsp/` runtime modules together and use Node.js 24+. For a manual install of the common language servers, run `npm ci --ignore-scripts` in `lsp/servers`. The engine checks project-local dependencies, installed language servers, and `PATH`. Bash lint diagnostics use ShellCheck when available. Go and Rust still use their project-selected toolchains. Increase `--timeout` for a cold start. Follow your project's requirements for builds and tests.
 
 ### Semantic rename previews
+
+Project language server settings use `.omp/lsp.json`, `.lsp.json`, and `lsp.json` in precedence order, with later files overriding earlier ones. Move settings needed from an Oh My Pi user configuration or YAML to a project JSON file.
 
 `rename-preview` asks the language server to locate a definition and references. `rename-file-preview` previews a file move and the corresponding import edits. Giving only a filename keeps the current directory. A multi-component path is relative to the project root. On macOS, both commands produce a full Git patch in a private temporary file by default. `--patch` selects a new output file. `--json` returns the patch path, preview, and Git `apply_root`. The supported edits depend on the language server.
 
@@ -244,7 +250,7 @@ Review the full patch and run `git apply --check` from `apply_root`. `--root` ma
 
 ### Persistent breakpoint debugging
 
-`omp-debug` uses Oh My Pi 19.0.0's DAP engine to retain breakpoints, stack frames, and variables during a task. Persistent sessions run on macOS and Linux with Node.js 24 and a debug adapter for the language. On macOS, C and C++ can use `lldb-dap` from Xcode or Command Line Tools.
+`omp-debug` talks directly to debug adapters over DAP and retains breakpoints, stack frames, and variables during a task. Persistent sessions run on macOS and Linux with Node.js 24 and a debug adapter for the language. On macOS, C and C++ can use `lldb-dap` from Xcode or Command Line Tools.
 
 For a manual install, keep `debug/omp-debug.mjs`, `debug/bridge.mjs`, and `debug/protocol.mjs` together. Link `omp-debug.mjs` as `omp-debug` on `PATH`.
 

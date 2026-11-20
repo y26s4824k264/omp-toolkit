@@ -169,7 +169,13 @@ function writePackage(item, output) {
       const name = licenseFile.name ?? "UPSTREAM-LICENSE";
       check(/^[A-Za-z0-9_.-]+$/u.test(name) && name !== "." && name !== "..",
         "Invalid stored license name for " + label);
-      writeFileSync(join(destination, name), licenseFile.text);
+      if (licenseFile.path) {
+        const local = realpathSync(resolve(toolkit, licenseFile.path));
+        check(within(toolkit, local), "Stored license path is outside the source tree for " + label);
+        copyNotice(local, join(destination, name));
+      } else {
+        writeFileSync(join(destination, name), licenseFile.text);
+      }
     }
   }
   if (ownerRoot && !existsSync(destination)) {

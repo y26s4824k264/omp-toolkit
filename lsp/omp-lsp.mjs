@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
+import { runRequests } from "./bridge.mjs";
 import { checkRenameDestination, checkRenameSource } from "./rename-patch.mjs";
 
 const help = `Usage: omp-lsp [--root DIR] [--json] ACTION [FILE ...]
@@ -32,15 +31,6 @@ Rename previews require a Git worktree. File destinations use a sibling name or 
 const fileActions = new Set([
   "definition", "references", "hover", "type-definition", "implementation", "symbols", "capabilities",
 ]);
-const prefix = "OMP_CODEX_LSP_RESULT=";
-const serverDefaults = {
-  "vscode-css-language-server": {
-    isLinter: true,
-    settings: { css: { validate: true }, scss: { validate: true }, less: { validate: true } },
-  },
-  "vscode-json-language-server": { isLinter: true, settings: { json: { validate: { enable: true } } } },
-};
-
 function positiveInteger(value, name, minimum, maximum) {
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number < minimum || number > maximum) {
@@ -55,7 +45,7 @@ function projectFile(root, path) {
   if (!name || name === ".." || name.startsWith(`..${sep}`) || isAbsolute(name) || !statSync(file).isFile()) {
     throw new Error(`Expected a regular file inside the project: ${path}`);
   }
-  return name === "*" ? `.${sep}${name}` : name;
+  return name === "*" ? "./*" : name.split(sep).join("/");
 }
 
 function requestsFor(root, action, files, values) {
@@ -88,69 +78,30 @@ function requestsFor(root, action, files, values) {
   }];
 }
 
-function runOmp(root, requests, patchOutput) {
-  const agentDir = realpathSync(mkdtempSync(join(tmpdir(), "omp-codex-lsp-")));
+async function run(root, requests, patchOutput) {
+  if (!requests[0].action.startsWith("rename-")) return await runRequests(root, requests);
+  if (process.platform !== "darwin") throw new Error("Rename preview requires the macOS filesystem sandbox");
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), "omp-lsp-rename-")));
   try {
-    const omp = process.env.OMP_LSP_BIN ?? join(homedir(), ".omp", "bin", "19.0.0", "omp");
-    const extension = fileURLToPath(new URL("./bridge.mjs", import.meta.url));
-    const serverBin = fileURLToPath(new URL("./servers/node_modules/.bin/", import.meta.url));
-    const path = [serverBin, dirname(process.execPath), process.env.PATH].filter(Boolean).join(delimiter);
-    const catalogueHome = requests[0].action === "catalog" ? { HOME: agentDir } : {};
-    // CSS and JSON serve document diagnostics without a workspace-ready event.
-    // Supply explicit validation settings for the standalone VS Code servers.
-    if (requests[0].action !== "catalog") {
-      const servers = { ...serverDefaults };
-      // Emmet offers completion only, so a diagnostics request would wait for a report it never sends.
-      if (requests[0].action === "diagnostics") servers["emmet-language-server"] = { disabled: true };
-      writeFileSync(join(agentDir, "lsp.json"), JSON.stringify({ servers }));
-    }
-    const processTimeout = requests.reduce((total, request) => total + request.timeout * 1000, 12000);
-    const args = [
-      "--cwd", root, "--allow-home", "--no-session", "--no-tools", "--no-lsp", "--no-skills", "--no-extensions",
-      "--no-rules", "--no-context-files", "--offline", "--no-judge", "--no-spotlight", "-e", extension, "-p",
-    ];
-    const rename = requests[0].action.startsWith("rename-");
-    if (rename && process.platform !== "darwin") throw new Error("Rename preview requires the macOS filesystem sandbox");
-    // The native LSP client handles unsolicited workspace/applyEdit requests. Keep the source read-only.
-    const policy = `(version 1) (allow default) (deny file-write*) (allow file-write* (subpath ${JSON.stringify(agentDir)}) (literal "/dev/null"))`;
-    const scratch = rename ? {
-      TMPDIR: agentDir, XDG_CACHE_HOME: join(agentDir, "cache"),
-      GOCACHE: join(agentDir, "go-cache"), GOPLSCACHE: join(agentDir, "gopls-cache"),
-    } : {};
-    const child = spawnSync(rename ? "/usr/bin/sandbox-exec" : omp, rename ? ["-p", policy, omp, ...args] : args, {
-      cwd: root,
-      env: {
-        ...process.env, ...catalogueHome, ...scratch, PATH: path, OMP_PROFILE: "", PI_CONFIG_DIR: "", PI_CODING_AGENT_DIR: agentDir,
-        OMP_CODEX_LSP_REQUESTS: JSON.stringify(requests),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: processTimeout,
-    });
-    if (child.error) throw child.error;
-    const frames = child.stdout.split(/\r?\n/).filter(line => line.startsWith(prefix));
-    if (child.status !== 0 || frames.length !== 1) {
-      const detail = child.stderr.trim().slice(-1600);
-      throw new Error(`OMP LSP bridge did not complete (${child.signal ?? child.status})${detail ? `\n${detail}` : ""}`);
-    }
-    const result = JSON.parse(frames[0].slice(prefix.length));
-    if (rename && result.exit_code === 0 && result.results[0].patch_bytes) {
+    const result = await runRequests(root, requests, scratch);
+    if (result.exit_code === 0 && result.results[0].patch_bytes) {
       const entry = result.results[0];
-      const patch = readFileSync(join(agentDir, "rename.patch"));
+      const patch = readFileSync(join(scratch, "rename.patch"));
       if (patch.length !== entry.patch_bytes) throw new Error("Rename patch is incomplete");
       const path = patchOutput ? resolve(patchOutput) : join(mkdtempSync(join(tmpdir(), "omp-rename-")), "rename.patch");
       writeFileSync(path, patch, { flag: "wx", mode: 0o600 });
       entry.patch_path = path;
       const limit = 8192;
       entry.preview = new TextDecoder().decode(patch.subarray(0, limit), { stream: true });
-      if (patch.length > limit) entry.preview += `\n… (${patch.length - limit} more bytes in the full patch)`;
+      if (patch.length > limit) entry.preview += "\n… (" + (patch.length - limit) + " more bytes in the full patch)";
     }
     return result;
   } finally {
-    rmSync(agentDir, { recursive: true, force: true });
+    rmSync(scratch, { recursive: true, force: true });
   }
 }
 
-function main() {
+async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     root: { type: "string" }, json: { type: "boolean" }, help: { type: "boolean", short: "h" },
     timeout: { type: "string" }, line: { type: "string" }, symbol: { type: "string" }, query: { type: "string" },
@@ -167,7 +118,7 @@ function main() {
   const root = realpathSync(values.root ?? process.cwd());
   if (!statSync(root).isDirectory()) throw new Error(`Expected a project directory: ${root}`);
   const requests = requestsFor(root, action, files, values);
-  const result = runOmp(root, requests, values.patch);
+  const result = await run(root, requests, values.patch);
   if (values.json) {
     console.log(JSON.stringify(result));
   } else if (result.servers) {
@@ -184,7 +135,7 @@ function main() {
 }
 
 try {
-  main();
+  await main();
 } catch (error) {
   console.error(`omp-lsp: ${error.message}`);
   process.exitCode = 2;

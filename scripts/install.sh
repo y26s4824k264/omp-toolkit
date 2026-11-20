@@ -3,10 +3,8 @@ set -euo pipefail
 
 upstream_url=https://github.com/can1357/oh-my-pi.git
 upstream_commit=57771ae562b9345e0579bceb2d68d585e3e6927e
-upstream_version=19.0.0
 toolkit_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 prefix="$HOME/.local/omp-toolkit-source"
-omp_bin="$HOME/.omp/bin/$upstream_version/omp"
 build_dir="$toolkit_dir/target"
 upstream_source=
 with_lsp_servers=false
@@ -16,7 +14,6 @@ usage() {
 Usage: scripts/install.sh [options]
 
   --prefix DIR           Install into DIR (default: ~/.local/omp-toolkit-source)
-  --omp-bin FILE         OMP 19.0.0 executable (default: ~/.omp/bin/19.0.0/omp)
   --upstream-source DIR  Read the pinned Oh My Pi commit from a local Git repository
   --build-dir DIR        Store Cargo build outputs in DIR (default: toolkit target/)
   --with-lsp-servers     Install the locked Node language server dependencies
@@ -31,11 +28,10 @@ die() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --prefix|--omp-bin|--upstream-source|--build-dir)
+        --prefix|--upstream-source|--build-dir)
             [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 requires a path"
             case "$1" in
                 --prefix) prefix=$2 ;;
-                --omp-bin) omp_bin=$2 ;;
                 --upstream-source) upstream_source=$2 ;;
                 --build-dir) build_dir=$2 ;;
             esac
@@ -57,11 +53,6 @@ fi
 node_major=$(node -p 'process.versions.node.split(".")[0]')
 [[ "$node_major" -ge 24 ]] || die 'Node.js 24 or later is required'
 node_bin=$(node -p 'process.execPath')
-[[ -f "$omp_bin" && -x "$omp_bin" ]] || die "OMP executable not found: $omp_bin. Use --omp-bin FILE."
-omp_dir=$(cd -- "$(dirname -- "$omp_bin")" && pwd -P)
-omp_bin="$omp_dir/$(basename -- "$omp_bin")"
-omp_version=$("$omp_bin" --version) || die "cannot run $omp_bin --version"
-[[ "$omp_version" == "omp/$upstream_version" ]] || die "expected omp/$upstream_version, found $omp_version"
 
 mkdir -p -- "$build_dir"
 build_dir=$(cd -- "$build_dir" && pwd -P)
@@ -99,8 +90,12 @@ cp "$toolkit_dir/src/log_preview.rs" "$shell_example/log_preview.rs"
 payload="$stage_dir/payload"
 mkdir -p "$payload/bin" "$payload/runtime/debug" "$payload/runtime/lsp/servers" \
     "$payload/runtime/profile" "$payload/runtime/stats" "$payload/runtime/licenses"
-cp "$toolkit_dir/debug/"{bridge,omp-debug,protocol}.mjs "$payload/runtime/debug/"
-cp "$toolkit_dir/lsp/"{bridge,omp-lsp,rename-patch,rename-preview}.mjs "$payload/runtime/lsp/"
+for runtime_component in debug lsp; do
+    for runtime_file in "$toolkit_dir/$runtime_component/"*.mjs "$toolkit_dir/$runtime_component/"*.json "$toolkit_dir/$runtime_component/UPSTREAM.md"; do
+        [[ -f "$runtime_file" && "$runtime_file" != *.test.mjs ]] || continue
+        cp "$runtime_file" "$payload/runtime/$runtime_component/"
+    done
+done
 cp "$toolkit_dir/stats/codex-context-stats.mjs" "$payload/runtime/stats/"
 cp -R "$toolkit_dir/profile/." "$payload/runtime/profile/"
 cp "$toolkit_dir/lsp/servers/"{package,package-lock}.json "$payload/runtime/lsp/servers/"
@@ -139,21 +134,16 @@ bin_dir="$prefix/bin"
 runtime_dir="$prefix/share/omp-toolkit"
 
 write_launcher() {
-    local launcher=$1 module=$2 omp_env=${3:-}
+    local launcher=$1 module=$2
     {
         printf '#!/bin/bash\n'
-        if [[ -n "$omp_env" ]]; then
-            printf 'omp_bin=%q\n' "$omp_bin"
-            # shellcheck disable=SC2016
-            printf 'export %s="${%s:-$omp_bin}"\n' "$omp_env" "$omp_env"
-        fi
         # shellcheck disable=SC2016
         printf 'exec %q %q "$@"\n' "$node_bin" "$runtime_dir/$module"
     } > "$payload/bin/$launcher"
 }
 
-write_launcher omp-lsp lsp/omp-lsp.mjs OMP_LSP_BIN
-write_launcher omp-debug debug/omp-debug.mjs OMP_DEBUG_BIN
+write_launcher omp-lsp lsp/omp-lsp.mjs
+write_launcher omp-debug debug/omp-debug.mjs
 write_launcher codex-context-stats stats/codex-context-stats.mjs
 
 mkdir -p -- "$bin_dir" "$runtime_dir"
@@ -166,5 +156,5 @@ fi
 printf '\nInstalled OMP toolkit in %s\n' "$prefix"
 # shellcheck disable=SC2016
 printf 'Add to PATH: export PATH=%q:"$PATH"\n' "$bin_dir"
-printf 'Register in Codex: codex mcp add omp -- %q --bin-dir %q --omp %q --node %q --profile-helper %q\n' \
-    "$bin_dir/omp-toolkit-mcp" "$bin_dir" "$omp_bin" "$node_bin" "$runtime_dir/profile/summary.mjs"
+printf 'Connect to Codex: codex mcp add omp -- %q --bin-dir %q --node %q --profile-helper %q\n' \
+    "$bin_dir/omp-toolkit-mcp" "$bin_dir" "$node_bin" "$runtime_dir/profile/summary.mjs"

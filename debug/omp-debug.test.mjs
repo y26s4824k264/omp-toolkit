@@ -1,20 +1,23 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { once } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createConnection } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { readFrame, responseLimit } from "./protocol.mjs";
 
 const cli = fileURLToPath(new URL("./omp-debug.mjs", import.meta.url));
-const omp = process.env.OMP_DEBUG_BIN ?? join(homedir(), ".omp", "bin", "19.0.0", "omp");
-const available = process.platform === "darwin" && existsSync(omp) &&
+const available = process.platform === "darwin" &&
   spawnSync("xcrun", ["--find", "lldb-dap"], { timeout: 3000 }).status === 0;
 
 function start(root, name) {
   const directory = join(root, name);
   const child = spawn(process.execPath, [cli, "--session", directory, "serve", "--root", root], {
+    env: { ...process.env, OMP_DEBUG_BIN: join(root, "missing-omp-host") },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const ready = Promise.withResolvers();
@@ -54,7 +57,60 @@ function locals(directory) {
   return debug(directory, "variables", String(scope.variablesReference)).variables;
 }
 
-test("native LLDB retains breakpoint state across CLI calls and stop interrupts an active continue", {
+async function startContinue(directory) {
+  const child = spawn(process.execPath, [cli, "--session", directory, "continue"], { stdio: "ignore" });
+  const closed = new Promise(resolve => child.once("close", resolve));
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const probe = command(directory, "status");
+    if (probe.status === 2 && /Debug server is busy/.test(probe.stdout)) return { closed };
+    await delay(20);
+  }
+  child.kill();
+  assert.fail("the continue request never started");
+}
+
+test("pause waits until continue can resolve a missing DAP thread ID", {
+  skip: process.platform === "win32", timeout: 15_000,
+}, async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "od-")));
+  const session = start(root, "delayed");
+  t.after(async () => {
+    session.child.kill("SIGTERM");
+    await session.closed;
+    rmSync(root, { recursive: true, force: true });
+  });
+  const adapter = join(root, "adapter");
+  writeFileSync(adapter, readFileSync(new URL("./test-fixtures/delayed-threads.mjs", import.meta.url)), { mode: 0o700 });
+  await session.ready;
+  const launch = debug(session.directory, "launch", adapter, "--adapter", adapter);
+  assert.equal(launch.snapshot.status, "stopped");
+  assert.equal(launch.snapshot.threadId, undefined);
+
+  const continued = await startContinue(session.directory);
+  const threadsRequested = join(root, "threads-requested");
+  for (let attempt = 0; attempt < 100 && !existsSync(threadsRequested); attempt++) await delay(20);
+  assert.ok(existsSync(threadsRequested), "the adapter never received the threads request");
+
+  const socket = createConnection(join(session.directory, "dap.sock"));
+  t.after(() => socket.destroy());
+  const connected = once(socket, "connect");
+  await connected;
+  const paused = readFrame(socket, responseLimit);
+  socket.write('{"command":"pause","args":[],"timeout":8}\n');
+  const respondedEarly = await Promise.race([paused.then(() => true), delay(200, false)]);
+  writeFileSync(join(root, "release-threads"), "");
+  assert.equal(respondedEarly, false, "pause reported success while continue was still finding a thread");
+
+  const response = await paused;
+  assert.equal(response.ok, true);
+  assert.equal(response.details.snapshot.status, "stopped");
+  assert.equal(response.details.snapshot.stopReason, "pause");
+  assert.equal(await continued.closed, 0);
+  debug(session.directory, "stop");
+  assert.equal((await session.closed).code, 0);
+});
+
+test("native LLDB sessions work without the Oh My Pi host and support concurrent pause and stop", {
   skip: !available, timeout: 30_000,
 }, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "od-")));
@@ -87,6 +143,10 @@ test("native LLDB retains breakpoint state across CLI calls and stop interrupts 
   sessions.push(first);
   await first.ready;
   const directory = first.directory;
+  const failed = command(directory, "launch", "target", "--adapter", join(root, "missing-adapter"));
+  assert.equal(failed.status, 2);
+  assert.match(failed.stdout, /ENOENT/);
+  assert.deepEqual(debug(directory, "status").sessions, []);
   assert.equal(debug(directory, "launch", "target", "--adapter", "lldb-dap", "--", "").snapshot.status, "stopped");
   assert.equal(debug(directory, "break", "target.c", "4").breakpoints[0].verified, true);
   assert.equal(debug(directory, "continue").state, "stopped");
@@ -99,17 +159,12 @@ test("native LLDB retains breakpoint state across CLI calls and stop interrupts 
   sessions.push(second);
   await second.ready;
   assert.deepEqual(debug(second.directory, "status").sessions, []);
-  const running = spawn(process.execPath, [cli, "--session", directory, "continue"], { stdio: "ignore" });
-  const continued = new Promise(resolve => running.once("close", resolve));
-  let busy;
-  for (let attempt = 0; attempt < 25 && !busy; attempt++) {
-    const probe = command(directory, "status");
-    busy = probe.status === 2 && /Debug server is busy/.test(probe.stdout);
-    if (!busy) await delay(20);
-  }
-  assert.ok(busy, "the continue request never started");
+  const paused = await startContinue(directory);
+  assert.equal(debug(directory, "pause").snapshot.status, "stopped");
+  assert.equal(await paused.closed, 0);
+  const running = await startContinue(directory);
   debug(directory, "stop");
-  assert.equal(await continued, 2);
+  assert.equal(await running.closed, 2);
   assert.equal((await first.closed).code, 0);
   assert.equal(existsSync(directory), false);
   assert.deepEqual(debug(second.directory, "status").sessions, []);

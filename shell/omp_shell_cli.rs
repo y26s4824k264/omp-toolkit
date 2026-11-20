@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashSet, VecDeque},
     env,
     ffi::OsString,
     fs::{self, File, OpenOptions},
@@ -11,6 +12,7 @@ use anyhow::{Context, Result, bail, ensure};
 use omp_shell::{
     minimizer::{self, MinimizerConfig},
     process::{self, ProcessOptions},
+    proctree::{Process, ProcessStatus},
 };
 
 mod log_preview;
@@ -19,9 +21,13 @@ const USAGE: &str = "\
 Usage: omp-shell bash|zsh|sh [shell arguments]\n\
        omp-shell run-log [--log PATH] -- PROGRAM [ARGS...]\n\
        omp-shell minimize LOG EXIT_CODE COMMAND\n\
+       omp-shell process-tree PID [--depth N] [--json]\n\
        omp-shell --version";
 
 const PREVIEW_BYTES: usize = 12_000;
+const PROCESS_TREE_DEFAULT_DEPTH: u8 = 2;
+const PROCESS_TREE_MAX_DEPTH: u8 = 8;
+const PROCESS_TREE_MAX_NODES: usize = 128;
 
 fn main() -> ExitCode {
     match run() {
@@ -50,6 +56,7 @@ fn run() -> Result<u8> {
         }
         Some("run-log") => run_log(args.collect()),
         Some("minimize") => minimize(args.collect()),
+        Some("process-tree") => process_tree(args),
         Some("--help" | "-h") => {
             println!("{USAGE}");
             Ok(0)
@@ -60,6 +67,116 @@ fn run() -> Result<u8> {
         }
         _ => bail!("{USAGE}"),
     }
+}
+
+#[derive(serde::Serialize)]
+struct ProcessRow {
+    pid: i32,
+    ppid: Option<i32>,
+    depth: u8,
+    status: &'static str,
+}
+
+#[derive(serde::Serialize)]
+struct ProcessTree {
+    processes: Vec<ProcessRow>,
+    truncated: bool,
+}
+
+fn process_tree(mut args: impl Iterator<Item = OsString>) -> Result<u8> {
+    let pid = args
+        .next()
+        .and_then(|arg| arg.into_string().ok())
+        .and_then(|arg| arg.parse::<i32>().ok())
+        .filter(|&pid| pid > 0)
+        .context("process-tree requires a positive PID")?;
+    let mut limit = None;
+    let mut json = false;
+    while let Some(option) = args.next() {
+        match option.to_str() {
+            Some("--depth") if limit.is_none() => {
+                limit = Some(
+                    args.next()
+                        .and_then(|arg| arg.into_string().ok())
+                        .and_then(|arg| arg.parse::<u8>().ok())
+                        .filter(|&depth| depth <= PROCESS_TREE_MAX_DEPTH)
+                        .with_context(|| {
+                            format!(
+                                "--depth requires an integer from 0 to {PROCESS_TREE_MAX_DEPTH}"
+                            )
+                        })?,
+                );
+            }
+            Some("--json") if !json => json = true,
+            _ => bail!(
+                "invalid or repeated process-tree option: {}",
+                option.to_string_lossy()
+            ),
+        }
+    }
+    let root = Process::from_pid(pid).with_context(|| {
+        format!("cannot inspect PID {pid}; the process exited or is inaccessible")
+    })?;
+    let tree = snapshot_process_tree(root, limit.unwrap_or(PROCESS_TREE_DEFAULT_DEPTH));
+    let mut out = io::stdout().lock();
+    if json {
+        serde_json::to_writer(&mut out, &tree)?;
+        writeln!(out)?;
+    } else {
+        writeln!(out, "PID\tPPID\tDEPTH\tSTATUS")?;
+        for row in &tree.processes {
+            let ppid = row
+                .ppid
+                .map_or_else(|| "-".to_owned(), |pid| pid.to_string());
+            writeln!(out, "{}\t{}\t{}\t{}", row.pid, ppid, row.depth, row.status)?;
+        }
+        if tree.truncated {
+            writeln!(out, "Process tree truncated at the depth or node limit.")?;
+        }
+    }
+    Ok(0)
+}
+
+fn snapshot_process_tree(root: Process, limit: u8) -> ProcessTree {
+    let mut seen = HashSet::from([root.pid()]);
+    let mut pending = VecDeque::from([(root, 0)]);
+    let mut tree = ProcessTree {
+        processes: Vec::new(),
+        truncated: false,
+    };
+    while let Some((process, depth)) = pending.pop_front() {
+        let status = match process.status() {
+            ProcessStatus::Running => "running",
+            ProcessStatus::Exited => "exited",
+        };
+        tree.processes.push(ProcessRow {
+            pid: process.pid(),
+            ppid: process.ppid(),
+            depth,
+            status,
+        });
+        if tree.truncated && (depth == limit || seen.len() == PROCESS_TREE_MAX_NODES) {
+            continue;
+        }
+        let mut children = process.children();
+        if depth == limit {
+            tree.truncated |= children.iter().any(|child| !seen.contains(&child.pid()));
+            continue;
+        }
+        children.sort_unstable_by_key(Process::pid);
+        for child in children {
+            if seen.contains(&child.pid()) {
+                continue;
+            }
+            if seen.len() == PROCESS_TREE_MAX_NODES {
+                tree.truncated = true;
+                break;
+            }
+            seen.insert(child.pid());
+            pending.push_back((child, depth + 1));
+        }
+    }
+    tree
 }
 
 fn run_log(args: Vec<OsString>) -> Result<u8> {
@@ -104,7 +221,6 @@ fn run_log(args: Vec<OsString>) -> Result<u8> {
 
 #[cfg(unix)]
 fn wait_for_command(command: Command) -> io::Result<ExitStatus> {
-    use omp_shell::proctree::Process;
     use tokio::signal::unix::{SignalKind, signal};
 
     // Keep the child in the foreground process group so the terminal still

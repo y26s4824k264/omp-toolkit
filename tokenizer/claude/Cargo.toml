@@ -1,0 +1,18 @@
+[package]
+name = "omp-offline-claude"
+version = "19.0.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/can1357/oh-my-pi"
+publish = false
+
+[dependencies]
+xutf = "=2.3.0"
+zstd = "=0.14.0"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

@@ -1,8 +1,7 @@
 use std::{
     fs,
-    io::{self, Write},
+    io::{self, BufWriter, Write},
     path::{Component, Path, PathBuf},
-    process::Command,
 };
 
 #[cfg(unix)]
@@ -12,8 +11,11 @@ use anyhow::{Context, Result, bail, ensure};
 use clap::{Parser, Subcommand};
 
 mod discovery;
+mod git_patch;
 mod hashline;
+mod ranked_find;
 mod structural;
+mod token_count;
 
 #[derive(Parser)]
 #[command(
@@ -71,6 +73,14 @@ enum EditCommand {
     },
     /// Read a source summary with original line ranges.
     ReadSummary { file: PathBuf },
+    /// Count tokens offline for a UTF-8 file, absolute or relative to the root.
+    TokenCount { file: PathBuf },
+    /// Rank files by the query terms they contain and show matching lines.
+    RankedFind {
+        query: String,
+        #[arg(long, default_value_t = 12)]
+        limit: usize,
+    },
 }
 
 pub(crate) struct Change {
@@ -106,6 +116,13 @@ fn main() -> Result<()> {
             return discovery::ast_find(&root, &lang, &pattern, &files, offset, limit);
         }
         EditCommand::ReadSummary { file } => return discovery::read_summary(&root, &file),
+        EditCommand::RankedFind { query, limit } => {
+            return ranked_find::ranked_find(&root, &query, limit);
+        }
+        EditCommand::TokenCount { file } => {
+            println!("{}", token_count::count_file(&root.join(file))?);
+            return Ok(());
+        }
     };
     emit_patch(&root, changes)
 }
@@ -156,14 +173,13 @@ fn emit_patch(root: &Path, mut changes: Vec<Change>) -> Result<()> {
         "duplicate file in edit batch"
     );
 
-    let snapshot = tempfile::tempdir().context("create diff workspace")?;
     #[cfg(unix)]
     let mut identities = HashSet::new();
-    for change in changes {
-        let (absolute, current) = read_project_file(root, &change.path)?;
+    for change in &changes {
+        let (_absolute, current) = read_project_file(root, &change.path)?;
         #[cfg(unix)]
         {
-            let metadata = absolute.metadata()?;
+            let metadata = _absolute.metadata()?;
             ensure!(
                 identities.insert((metadata.dev(), metadata.ino())),
                 "more than one path refers to the same file: {}",
@@ -175,49 +191,11 @@ fn emit_patch(root: &Path, mut changes: Vec<Change>) -> Result<()> {
             "source changed during preview: {}",
             change.path.display()
         );
-        write_diff_input(
-            &snapshot.path().join("a").join(&change.path),
-            &change.before,
-        )?;
-        write_diff_input(&snapshot.path().join("b").join(&change.path), &change.after)?;
     }
 
-    let diff = Command::new("git")
-        .current_dir(snapshot.path())
-        .args([
-            "diff",
-            "--no-index",
-            "--no-prefix",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-renames",
-            "--binary",
-            "--",
-            "a",
-            "b",
-        ])
-        .output()
-        .context("run git diff")?;
-    ensure!(
-        diff.status.success() || diff.status.code() == Some(1),
-        "git diff failed: {}",
-        String::from_utf8_lossy(&diff.stderr).trim()
-    );
-    io::stdout()
-        .lock()
-        .write_all(&diff.stdout)
-        .context("write Git patch")
-}
-
-fn write_diff_input(path: &Path, content: &str) -> Result<()> {
-    let parent = path.parent().context("resolve diff input directory")?;
-    fs::create_dir_all(parent)?;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .with_context(|| format!("create diff input {}", path.display()))?;
-    file.write_all(content.as_bytes())
-        .with_context(|| format!("write diff input {}", path.display()))
+    let mut output = BufWriter::new(io::stdout().lock());
+    for change in &changes {
+        git_patch::write_change(&mut output, change).context("write Git patch")?;
+    }
+    output.flush().context("flush Git patch")
 }

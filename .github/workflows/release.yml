@@ -84,7 +84,7 @@ jobs:
           node scripts/prepare-shell.mjs
       - name: Adapter tests and build
         run: |
-          cargo test --locked --release -p omp-refactor
+          cargo test --locked --release -p omp-refactor -p omp-offline-claude
           cargo build --locked --release -p omp-refactor --bins --message-format=json-render-diagnostics > target/toolkit-build.jsonl
       - name: Build Shell and obash
         working-directory: target/upstream-source
@@ -97,6 +97,7 @@ jobs:
           RUST_TARGET: ${{ matrix.target }}
         run: |
           node --test scripts/install-release.test.mjs
+          node --test --test-name-pattern 'pause waits until' debug/omp-debug.test.mjs
           node scripts/package-release.mjs "$RUST_TARGET"
           node scripts/smoke-release.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

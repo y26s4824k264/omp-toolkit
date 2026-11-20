@@ -4,8 +4,8 @@ param(
     [string]$Version = 'latest',
     [ValidateSet('auto', 'none', 'codex', 'claude')]
     [string]$Client = 'auto',
-    [string]$OmpBin,
     [switch]$WithLspServers,
+    [switch]$WithoutLspServers,
     [switch]$Help
 )
 
@@ -19,9 +19,9 @@ Usage: .\install.ps1 [options]
   -Prefix DIR        Install into DIR
   -Version TAG       Install a release tag such as v0.2.0 (default: latest)
   -Client NAME       Configure local clients: auto (default), none, codex, or claude
-                     Auto detects installed Codex and Claude Code clients
-  -OmpBin FILE       Use an existing Oh My Pi 19.0.0 executable
-  -WithLspServers    Install optional language servers (requires Node 24+ and npm on PATH)
+                     Auto detects Codex and Claude Code and configures MCP and global instructions
+  -WithoutLspServers Skip installing the default language servers
+  -WithLspServers    Install the default language servers (already enabled)
   -Help              Show this help
 '@
     return
@@ -29,6 +29,9 @@ Usage: .\install.ps1 [options]
 
 if ($env:OS -ne 'Windows_NT') {
     throw 'Use install.sh on macOS or Linux.'
+}
+if ($WithLspServers -and $WithoutLspServers) {
+    throw 'Choose either -WithLspServers or -WithoutLspServers.'
 }
 
 $repo = 'y26s4824k264/omp-toolkit'
@@ -54,13 +57,21 @@ function Assert-Checksum([string]$Path, [string]$Name, [string]$Manifest) {
     if ($actual -ine $expected[0]) { throw "Checksum mismatch for $Name." }
 }
 
-function Find-Node {
+function Find-Node([bool]$NeedNpm) {
     $candidate = Get-Command -Name node.exe -CommandType Application -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($candidate) {
         try {
             $valid = & $candidate.Path -p 'Number(process.versions.node.split(".")[0]) >= 24' 2>$null
-            if ($LASTEXITCODE -eq 0 -and $valid -ceq 'true') { return $candidate.Path }
+            if ($LASTEXITCODE -ne 0 -or $valid -cne 'true') { return $null }
+            if ($NeedNpm) {
+                $npm = Get-Command -Name npm.cmd -CommandType Application -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                if (-not $npm) { return $null }
+                & $npm.Path --version 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0) { return $null }
+            }
+            return $candidate.Path
         } catch {
             # A broken tool on PATH does not prevent a portable installation.
         }
@@ -68,16 +79,13 @@ function Find-Node {
     return $null
 }
 
-$node = Find-Node
-if ($WithLspServers -and (-not $node -or -not (Get-Command -Name npm.cmd -CommandType Application -ErrorAction SilentlyContinue))) {
-    throw 'Install Node.js 24 or later with npm to use -WithLspServers.'
-}
+$node = Find-Node (-not $WithoutLspServers)
 
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('omp-toolkit-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($stage)
 try {
-    $portableNode = -not $node
-    if ($portableNode) {
+    $npmCli = $null
+    if (-not $node) {
         $machine = $env:PROCESSOR_ARCHITEW6432
         if (-not $machine) { $machine = $env:PROCESSOR_ARCHITECTURE }
         $arch = switch ($machine) {
@@ -85,14 +93,22 @@ try {
             'ARM64' { 'arm64' }
             default { throw 'Supported Windows architectures are x64 and arm64.' }
         }
-        Write-Host "Downloading Node.js $nodeVersion for Windows/$arch"
+        Write-Host "Downloading Node.js $nodeVersion with npm for Windows/$arch"
         $nodeDist = "https://nodejs.org/dist/$nodeVersion"
-        $nodeAsset = "win-$arch/node.exe"
+        $nodeName = "node-$nodeVersion-win-$arch"
+        $nodeAsset = "$nodeName.zip"
         $manifest = Join-Path $stage 'node-checksums.txt'
-        $node = Join-Path $stage 'node.exe'
+        $archive = Join-Path $stage $nodeAsset
         Save-Download "$nodeDist/SHASUMS256.txt" $manifest
-        Save-Download "$nodeDist/$nodeAsset" $node
-        Assert-Checksum $node $nodeAsset $manifest
+        Save-Download "$nodeDist/$nodeAsset" $archive
+        Assert-Checksum $archive $nodeAsset $manifest
+        Expand-Archive -LiteralPath $archive -DestinationPath $stage
+        $nodeHome = Join-Path $stage $nodeName
+        $node = Join-Path $nodeHome 'node.exe'
+        $npmCli = Join-Path $nodeHome 'node_modules/npm/bin/npm-cli.js'
+        if (-not (Test-Path -LiteralPath $node -PathType Leaf) -or -not (Test-Path -LiteralPath $npmCli -PathType Leaf)) {
+            throw 'Node.js archive did not contain Node and npm.'
+        }
     }
 
     if ($Version -ceq 'latest') {
@@ -110,9 +126,8 @@ try {
 
     $installArgs = @($installer, '--version', $Version, '--client', $Client.ToLowerInvariant())
     if ($Prefix) { $installArgs += @('--prefix', $Prefix) }
-    if ($OmpBin) { $installArgs += @('--omp-bin', $OmpBin) }
-    if ($WithLspServers) { $installArgs += '--with-lsp-servers' }
-    if ($portableNode) { $installArgs += @('--portable-node', $node) }
+    if ($WithoutLspServers) { $installArgs += '--without-lsp-servers' }
+    if ($npmCli) { $installArgs += @('--portable-node', $node, '--npm-cli', $npmCli) }
     & $node @installArgs
     if ($LASTEXITCODE -ne 0) { throw "Toolkit installer exited with code $LASTEXITCODE." }
 } finally {

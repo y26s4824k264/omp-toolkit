@@ -12,7 +12,7 @@ function run(root, ...args) {
   return spawnSync(process.execPath, [cli, "--root", root, "--json", ...args], { encoding: "utf8" });
 }
 
-test("lists all pinned native definitions without a project", () => {
+test("lists all pinned upstream server definitions without a project", () => {
   const result = run(tmpdir(), "catalog");
   assert.equal(result.status, 0, result.stderr);
   const names = JSON.parse(result.stdout).servers.map(server => server.name);
@@ -38,10 +38,48 @@ test("an existing bracketed path with no matching server is incomplete", () => {
   }
 });
 
+test("a server that ignores shutdown and TERM cannot hang the CLI", () => {
+  const root = mkdtempSync(join(tmpdir(), "omp-lsp-stubborn-"));
+  const pidFile = join(root, "server.pid");
+  try {
+    const script = join(root, "server.cjs");
+    writeFileSync(script, [
+      'require("node:fs").writeFileSync("server.pid", String(process.pid));',
+      'process.on("SIGTERM", () => {});',
+      'setInterval(() => {}, 1000);',
+      'process.stdin.once("data", () => {',
+      '  const reply = JSON.stringify({jsonrpc:"2.0",id:1,result:{capabilities:{hoverProvider:true}}});',
+      '  process.stdout.write("Content-Length: " + Buffer.byteLength(reply) + "\\r\\n\\r\\n" + reply);',
+      '});',
+      'process.stdin.resume();',
+    ].join("\n"));
+    writeFileSync(join(root, "example.fixture"), "fixture");
+    writeFileSync(join(root, "lsp.json"), JSON.stringify({
+      servers: { fixture: { command: process.execPath, args: [script], fileTypes: [".fixture"] } },
+    }));
+    const result = spawnSync(process.execPath, [cli, "--root", root, "--json", "capabilities", "example.fixture"], {
+      encoding: "utf8", timeout: 7000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout || result.stderr);
+    assert.match(JSON.parse(result.stdout).results[0].text, /"hoverProvider": true/);
+  } finally {
+    if (existsSync(pidFile)) {
+      try { process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL"); } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+    rmSync(root, { recursive: true });
+  }
+});
+
 const localBin = fileURLToPath(new URL("./servers/node_modules/.bin/", import.meta.url));
 const serverPaths = [localBin, ...(process.env.PATH ?? "").split(delimiter)];
+const serverExists = name => serverPaths.some(directory => process.platform === "win32"
+  ? [".exe", ".cmd"].some(suffix => existsSync(join(directory, name + suffix)))
+  : existsSync(join(directory, name)));
 const hasValidationServers = ["vscode-json-language-server", "vscode-css-language-server"]
-  .every(server => serverPaths.some(directory => existsSync(join(directory, server))));
+  .every(serverExists);
 
 test("malformed JSON and CSS report diagnostics without workspace indexing", { skip: !hasValidationServers }, () => {
   const root = mkdtempSync(join(tmpdir(), "omp-lsp-validation-test-"));
@@ -61,7 +99,32 @@ test("malformed JSON and CSS report diagnostics without workspace indexing", { s
   }
 });
 
-const hasTypeScript = serverPaths.some(directory => existsSync(join(directory, "typescript-language-server")));
+const hasTypeScript = serverExists("typescript-language-server");
+
+test("direct TypeScript stdio finds cross-file references and workspace symbols", { skip: !hasTypeScript }, () => {
+  const root = mkdtempSync(join(tmpdir(), "omp-lsp-project-"));
+  try {
+    writeFileSync(join(root, "tsconfig.json"), '{"include":["*.ts"]}\n');
+    writeFileSync(join(root, "lib.ts"), "export function exactSymbol(input: number) { return input }\n");
+    writeFileSync(join(root, "app.ts"), 'import { exactSymbol } from "./lib"; console.log(exactSymbol(13));\n');
+    function query(...arguments_) {
+      const result = run(root, ...arguments_);
+      assert.equal(result.status, 0, result.stdout || result.stderr);
+      const { results: [report] } = JSON.parse(result.stdout);
+      assert.equal(report.server, "typescript-language-server");
+      return JSON.parse(report.text);
+    }
+    const definition = query("definition", "app.ts", "--symbol", "exactSymbol#2");
+    assert.ok(definition.some(hit => (hit.uri ?? hit.targetUri).endsWith("/lib.ts")));
+    const references = query("references", "lib.ts", "--symbol", "exactSymbol");
+    assert.ok(references.some(hit => hit.uri.endsWith("/app.ts")));
+    assert.match(JSON.stringify(query("hover", "lib.ts", "--line", "1", "--symbol", "exactSymbol")), /exactSymbol/);
+    assert.ok(query("symbols", "lib.ts").some(item => item.name === "exactSymbol"));
+    assert.ok(query("symbols", "--query", "exactSymbol").some(item => item.name === "exactSymbol"));
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
 
 test("TypeScript rename previews produce complete Git patches from a nested LSP root", {
   skip: process.platform !== "darwin" || !hasTypeScript,
