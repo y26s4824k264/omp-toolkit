@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "omp-refactor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1140,6 +1140,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

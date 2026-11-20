@@ -242,7 +242,7 @@ impl OmpTools {
     )]
     async fn shell_parse(&self, Parameters(input): Parameters<ParseShell>) -> CallToolResult {
         let result = async {
-            let mut command = Command::new(self.bin_dir.join("obash"));
+            let mut command = self.tool_command("obash");
             command
                 .env_remove("BASH_ENV")
                 .env_remove("ENV")
@@ -271,7 +271,7 @@ impl OmpTools {
                     log.display(),
                 ));
             }
-            let mut command = Command::new(self.bin_dir.join("omp-shell"));
+            let mut command = self.tool_command("omp-shell");
             command
                 .arg("minimize")
                 .arg(log)
@@ -350,9 +350,14 @@ impl OmpTools {
 }
 
 impl OmpTools {
+    fn tool_command(&self, name: &str) -> Command {
+        let executable = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+        Command::new(self.bin_dir.join(executable))
+    }
+
     fn refactor(&self, root: &Path, subcommand: &str) -> Result<Command> {
         let root = project_root(root)?;
-        let mut command = Command::new(self.bin_dir.join("omp-refactor"));
+        let mut command = self.tool_command("omp-refactor");
         command
             .current_dir(&root)
             .arg("--root")

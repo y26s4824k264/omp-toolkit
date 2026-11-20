@@ -26,6 +26,7 @@ Commands:
 
 Wait for OMP_DEBUG_READY before sending requests. Responses are JSON.
 The request timeout defaults to 30s. The server's idle timeout defaults to 900s.
+Debug sessions require macOS or Linux with Unix domain sockets.
 `;
 
 function sessionLocation(argument) {
@@ -153,6 +154,7 @@ try {
   if (values.help || !positionals.length) {
     process.stdout.write(help);
   } else {
+    if (process.platform === "win32") throw new Error("Debug sessions require macOS or Linux with Unix domain sockets");
     const [command, ...args] = positionals;
     const location = sessionLocation(values.session);
     if (command === "serve") {

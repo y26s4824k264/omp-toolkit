@@ -1,6 +1,6 @@
 [package]
 name = "omp-refactor"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -28,6 +28,9 @@ tokio.workspace = true
 tokio-util.workspace = true
 omp-ast.workspace = true
 omp-edit = { path = "crates/edit" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 [lints]
 workspace = true

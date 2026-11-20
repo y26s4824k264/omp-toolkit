@@ -12,6 +12,12 @@ The toolkit's adapters are provided under the root [MIT License](LICENSE). The t
 
 The INI fixture has SHA-256 `4884a74e0e60d02fc897b1f780c044e578ff839c9eeb6f4742d2feaef9839ece`, as recorded in the [WASM release manifest](https://github.com/stencil-hq/wasm-grammars/releases/download/v1/manifest.json). The grammar's published crate identifies source revision [`d1f6ae18e86de3c21bb6ab634ff9ab549ceb1249`](https://github.com/justinmk/tree-sitter-ini/tree/d1f6ae18e86de3c21bb6ab634ff9ab549ceb1249). The license copy above comes from that crate.
 
-Cargo and npm lockfiles describe separate dependencies fetched during installation or building. The source distribution includes the toolkit and the vendored files listed above. The Oh My Pi host, upstream shell engine and `obash` source, language servers, and debug adapters are obtained separately and carry their upstream terms.
+The source distribution includes the toolkit and the vendored files listed above. Source builds obtain the Shell and `obash` engines from the pinned Oh My Pi commit.
+
+Binary bundles contain the compiled Rust tools, the upstream Shell and `obash` engines, and the toolkit's Node adapters. Open `runtime/licenses/BINARY_DEPENDENCIES.md` in the archive, or `licenses/BINARY_DEPENDENCIES.md` beside the installed runtime, for the target's Cargo package notices and Rust Standard Library attribution. The bundle retains the pinned Shell's license and [RTK notice](https://github.com/can1357/oh-my-pi/blob/57771ae562b9345e0579bceb2d68d585e3e6927e/crates/shell/NOTICE). It provides the unchanged source archive of each MPL-covered dependency, including `uluru`, alongside its license.
+
+For the macOS binary bundles, the Shell build uses the system `open` command by omitting the upstream `util.open` builtin and its SDK-derived framework bindings.
+
+The installer obtains the Oh My Pi host and Node.js from their respective upstream distributors when needed. Optional language servers and debug adapters carry their own terms.
 
 The toolkit is independently maintained. References to Oh My Pi and Codex identify upstream software and integration targets.

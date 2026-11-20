@@ -50,7 +50,7 @@ pub(crate) async fn wait(input: ReadyRequest) -> Result<String> {
     );
     if let Some(pid) = input.pid {
         ensure!(
-            (1..=i32::MAX as u32).contains(&pid),
+            pid != 0 && (!cfg!(unix) || pid <= i32::MAX as u32),
             "pid must be a positive process ID"
         );
     }
@@ -231,9 +231,44 @@ fn process_exited(pid: Option<u32>) -> Result<bool> {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn process_exited(pid: Option<u32>) -> Result<bool> {
-    ensure!(pid.is_none(), "pid readiness checks require a Unix host");
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::{
+        Foundation::{
+            ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        },
+        System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+    };
+
+    let Some(pid) = pid else { return Ok(false) };
+    // SAFETY: The handle is non-inheritable and allows waiting only.
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        let error = std::io::Error::last_os_error();
+        return match error.raw_os_error().map(|code| code as u32) {
+            Some(ERROR_INVALID_PARAMETER) => Ok(true),
+            Some(ERROR_ACCESS_DENIED) => Ok(false),
+            _ => Err(error).context("inspect readiness PID"),
+        };
+    }
+
+    // SAFETY: OpenProcess returned an owned handle. A zero timeout only polls.
+    let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+    match unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) } {
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
+        WAIT_FAILED => Err(std::io::Error::last_os_error()).context("inspect readiness PID"),
+        status => anyhow::bail!("unexpected process wait status: {status}"),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_exited(pid: Option<u32>) -> Result<bool> {
+    ensure!(
+        pid.is_none(),
+        "pid readiness checks require a Unix or Windows host"
+    );
     Ok(false)
 }
 
@@ -242,6 +277,18 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn pid_readiness_distinguishes_running_and_exited_processes() -> Result<()> {
+        assert!(!process_exited(Some(std::process::id()))?);
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "exit 7"])
+            .spawn()?;
+        assert_eq!(child.wait()?.code(), Some(7));
+        assert!(process_exited(Some(child.id()))?);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn log_ignores_prior_bytes_and_detects_a_split_marker() -> Result<()> {

@@ -1,0 +1,147 @@
+name: Cross-platform release
+
+on:
+  pull_request:
+  push:
+    branches: ['release/**']
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Leave blank to validate, or enter the version tag to publish from main"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  TOOLCHAIN: nightly-2026-11-08
+  UPSTREAM_REPOSITORY: https://github.com/can1357/oh-my-pi.git
+  UPSTREAM_COMMIT: 57771ae562b9345e0579bceb2d68d585e3e6927e
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+            target: x86_64-apple-darwin
+          - runner: ubuntu-22.04
+            platform: linux
+            arch: x64
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-22.04-arm
+            platform: linux
+            arch: arm64
+            target: aarch64-unknown-linux-gnu
+          - runner: windows-2022
+            platform: win32
+            arch: x64
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            platform: win32
+            arch: arm64
+            target: aarch64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24.22.3
+          architecture: ${{ matrix.arch }}
+      - name: Verify native toolchain
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+          EXPECTED_PLATFORM: ${{ matrix.platform }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+          actual_target=$(rustc --version --verbose | awk '/^host: / { print $2 }' | tr -d '\r')
+          test "$actual_target" = "$EXPECTED_TARGET"
+          node -e 'if (process.platform !== process.env.EXPECTED_PLATFORM || process.arch !== process.env.EXPECTED_ARCH) process.exit(1)'
+      - name: Fetch pinned Shell source
+        run: |
+          mkdir -p target/upstream-source
+          git -C target/upstream-source init
+          git -C target/upstream-source fetch --depth=1 --no-tags "$UPSTREAM_REPOSITORY" "$UPSTREAM_COMMIT"
+          git -C target/upstream-source checkout --detach FETCH_HEAD
+          test "$(git -C target/upstream-source rev-parse HEAD)" = "$UPSTREAM_COMMIT"
+          node scripts/prepare-shell.mjs
+      - name: Adapter tests and build
+        run: |
+          cargo test --locked --release -p omp-refactor
+          cargo build --locked --release -p omp-refactor --bins --message-format=json-render-diagnostics > target/toolkit-build.jsonl
+      - name: Build Shell and obash
+        working-directory: target/upstream-source
+        run: |
+          cargo +"$TOOLCHAIN" build --locked --profile ci -p omp-shell \
+            --example omp_shell_cli --bin obash --target-dir ../upstream-build \
+            --message-format=json-render-diagnostics > ../shell-build.jsonl
+      - name: Package and verify installation
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          node --test scripts/install-release.test.mjs
+          node scripts/package-release.mjs "$RUST_TARGET"
+          node scripts/smoke-release.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-${{ matrix.platform }}-${{ matrix.arch }}
+          path: target/distribution/omp-codex-toolkit-*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: release-assets
+      - name: Publish exactly the tested packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          manifest_version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
+          test "$RELEASE_VERSION" = "v$manifest_version"
+          [[ "$RELEASE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          for arch in arm64 x64; do
+            test -s "release-assets/omp-codex-toolkit-darwin-$arch.tar.gz"
+            test -s "release-assets/omp-codex-toolkit-linux-$arch.tar.gz"
+            test -s "release-assets/omp-codex-toolkit-win32-$arch.zip"
+          done
+          cp install.sh install.ps1 scripts/install-release.mjs release-assets/
+          (cd release-assets && sha256sum -- install-release.mjs install.ps1 install.sh omp-codex-toolkit-* > SHA256SUMS)
+          tag_ref=$(git ls-remote origin "refs/tags/$RELEASE_VERSION")
+          if [ -n "$tag_ref" ]; then
+            echo "Release tag $RELEASE_VERSION already exists" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_VERSION" --target "$GITHUB_SHA" \
+            --title "OMP Codex Toolkit $RELEASE_VERSION" \
+            --notes-file .github/release-notes.md release-assets/*
