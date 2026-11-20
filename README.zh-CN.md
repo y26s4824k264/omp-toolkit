@@ -17,19 +17,21 @@ Rust 引擎和语言服务器默认配置提取自 [Oh My Pi v19.0.0](https://gi
 **macOS 和 Linux**
 
 ```sh
-curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.sh && bash install.sh
+curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.2.0/install.sh && bash install.sh --version v0.2.0
 ```
 
-默认安装到 `$HOME/.local/omp-toolkit`。可用 `--prefix DIR` 指定目录、`--version v0.2.0` 固定版本，或用 `--without-lsp-servers` 跳过常见语言服务器的安装。
+默认安装到 `$HOME/.local/omp-toolkit`。可用 `--prefix DIR` 指定目录，或用 `--without-lsp-servers` 跳过常见语言服务器的安装。
 
 **Windows PowerShell 5.1 或更新版本**
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.ps1 -OutFile install.ps1
-& .\install.ps1
+Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.2.0/install.ps1 -OutFile install.ps1
+& .\install.ps1 -Version v0.2.0
 ```
 
-默认安装到 `%LOCALAPPDATA%\OMP Toolkit`。对应参数包括 `-Prefix DIR`、`-Version v0.2.0` 和 `-WithoutLspServers`。若机器策略限制运行下载的 PowerShell 脚本，请按本机或组织的流程审核并允许运行。
+默认安装到 `%LOCALAPPDATA%\OMP Toolkit`。对应参数包括 `-Prefix DIR` 和 `-WithoutLspServers`。若机器策略限制运行下载的 PowerShell 脚本，请按本机或组织的流程审核并允许运行。
+
+这些命令使用带版本号的下载地址，GitHub 匿名 API 限流时也能安装。要切换版本，请同时改下载地址和脚本参数里的版本号。
 
 安装器会检测本机可用的 Codex 和 Claude Code 命令并接入 MCP。客户端的 `omp` 条目指向本次安装时，安装器也会把带标记的工具优先规则追加到全局指令。仅需工具和配置文件时，macOS/Linux 用 `--client none`，Windows 用 `-Client none`。按脚本输出可将 `bin` 目录加入当前终端的 `PATH`。
 

@@ -17,19 +17,21 @@ You can also give your coding agent this instruction.
 **macOS and Linux**
 
 ```sh
-curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.sh && bash install.sh
+curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.2.0/install.sh && bash install.sh --version v0.2.0
 ```
 
-The default install directory is `$HOME/.local/omp-toolkit`. Use `--prefix DIR` for a custom directory, `--version v0.2.0` to pin the release, or `--without-lsp-servers` to skip the bundled list of language servers.
+The default install directory is `$HOME/.local/omp-toolkit`. Use `--prefix DIR` for a custom directory or `--without-lsp-servers` to skip the bundled list of language servers.
 
 **Windows PowerShell 5.1 or later**
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/latest/download/install.ps1 -OutFile install.ps1
-& .\install.ps1
+Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.2.0/install.ps1 -OutFile install.ps1
+& .\install.ps1 -Version v0.2.0
 ```
 
-The default install directory is `%LOCALAPPDATA%\OMP Toolkit`. The options include `-Prefix DIR`, `-Version v0.2.0`, and `-WithoutLspServers`. If machine policy restricts downloaded PowerShell scripts, follow your machine's or organization's process to review and allow the script.
+The default install directory is `%LOCALAPPDATA%\OMP Toolkit`. The options include `-Prefix DIR` and `-WithoutLspServers`. If machine policy restricts downloaded PowerShell scripts, follow your machine's or organization's process to review and allow the script.
+
+The commands use versioned download URLs, so they work even when GitHub rate-limits anonymous API requests for release discovery. To choose another release, change the tag in both the URL and the installer argument.
 
 The installer detects accessible local Codex and Claude Code CLIs and adds the MCP entry to each detected client. When the client's `omp` entry points to this installation, setup also adds a marked block of global tool instructions. Existing unrelated entries stay in place. Use `--client none` on macOS/Linux or `-Client none` on Windows for the tools and configuration files only. Use the printed command to add `bin` to your terminal's `PATH`.
 
