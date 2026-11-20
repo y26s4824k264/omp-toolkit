@@ -135,7 +135,7 @@ try {
     assert.notEqual(corrupt.status, 0);
     assert.match((corrupt.stderr || '') + (corrupt.stdout || ''), /checksum|sha.?256/i);
     writeFileSync(checksum, `${sha256}  ${asset}\n`);
-    run(process.execPath, args, { cwd: repo, stdio: 'inherit' });
+    run(process.execPath, args, { cwd: repo, stdio: 'inherit', timeout: 360_000 });
     if (!windows) assert.match(run(join(prefix, 'bin', 'omp-codex-mcp'), ['--version']), /omp-toolkit-mcp/);
 
     run('git', ['init', '--quiet', project]);
