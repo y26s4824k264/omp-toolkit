@@ -136,7 +136,7 @@ try {
     assert.match((corrupt.stderr || '') + (corrupt.stdout || ''), /checksum|sha.?256/i);
     writeFileSync(checksum, `${sha256}  ${asset}\n`);
     run(process.execPath, args, { cwd: repo, stdio: 'inherit', timeout: 360_000 });
-    if (!windows) assert.match(run(join(prefix, 'bin', 'omp-codex-mcp'), ['--version']), /omp-toolkit-mcp/);
+    assert.match(run(join(prefix, 'bin', 'omp-toolkit-mcp' + suffix), ['--version']), /omp-toolkit-mcp/);
 
     run('git', ['init', '--quiet', project]);
     writeFileSync(join(project, file), source);
@@ -151,10 +151,39 @@ try {
     assert.deepEqual(vscode, { ...config, type: 'stdio' });
     await smokeMcp(config);
 
-    const ranked = JSON.parse(run(join(prefix, 'bin', 'omp-refactor' + suffix), [
+    const refactor = join(prefix, 'bin', 'omp-refactor' + suffix);
+    const ranked = JSON.parse(run(refactor, [
         '--root', project, 'ranked-find', 'oldCall result', '--limit', '2',
     ]));
     assert.equal(ranked.results[0].path, file);
+
+    writeFileSync(join(project, 'change.edit'), `*** Edit File: ${file}\n*** Find\noldCall(7)\n*** Replace\nnewCall(7)\n`);
+    const anchoredPatch = run(refactor, ['--root', project, 'sloppy', '--patch', join(project, 'change.edit'), file]);
+    assert.match(anchoredPatch, /newCall\(7\)/);
+    run('git', ['-C', project, 'apply', '--check', '-'], { input: anchoredPatch });
+
+    const plan = join(project, 'magic-plan.json');
+    const intent = join(project, 'magic-intent.md');
+    const replies = join(project, 'magic-replies.json');
+    writeFileSync(intent, `# ${file}\n- Replace oldCall with newCall.\n`);
+    writeFileSync(plan, launchInstalled('omp-magic', ['prepare', '--root', project, '--instructions', intent]));
+    writeFileSync(replies, JSON.stringify({ replies: [{ path: file, operations: '["sub",1,"oldCall","newCall"]' }] }));
+    const magicPatch = launchInstalled('omp-magic', ['preview', '--root', project, '--plan', plan, '--replies', replies]);
+    assert.match(magicPatch, /newCall\(7\)/);
+    run('git', ['-C', project, 'apply', '--check', '-'], { input: magicPatch });
+    assert.equal(readFileSync(join(project, file), 'utf8'), source);
+
+    const learn = (...args) => run(refactor, ['--root', project, 'learn', ...args]);
+    assert.deepEqual(JSON.parse(learn('list')), []);
+    const lesson = 'Review the complete patch before applying it.';
+    assert.equal(JSON.parse(learn('save', lesson)).created, true);
+    assert.equal(JSON.parse(learn('save', lesson)).created, false);
+    assert.deepEqual(JSON.parse(learn('list')), [{ lesson }]);
+    writeFileSync(join(project, 'skill-body.md'), 'Review and validate the changes.\n');
+    const skill = ['patch-review', '--description', 'Review a patch', '--body-file', 'skill-body.md'];
+    const preview = learn('skill', 'preview', ...skill);
+    learn('skill', 'create', ...skill);
+    assert.equal(readFileSync(join(project, '.omp-toolkit', 'learning', 'skills', skill[0], 'SKILL.md'), 'utf8'), preview);
 
     const catalog = JSON.parse(launchInstalled('omp-lsp', ['--json', 'catalog']));
     assert.equal(catalog.servers.length, 55);
@@ -163,7 +192,9 @@ try {
         '--root', project, '--json', 'check', 'invalid.json',
     ]), error => error.status === 1 && JSON.parse(error.stdout).results[0].status === 'errors');
     launchInstalled('omp-debug', ['--help']);
-    launchInstalled('codex-context-stats', ['--help']);
+    const contextHelp = launchInstalled('omp-context-stats', ['--help']);
+    assert.match(contextHelp, /Usage: omp-context-stats/);
+    assert.match(contextHelp, /Codex rollout JSONL/);
 
     const shell = join(prefix, 'bin', 'omp-shell' + suffix);
     const shellResult = spawnSync(shell, [

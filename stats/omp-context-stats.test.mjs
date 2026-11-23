@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const cli = fileURLToPath(new URL("codex-context-stats.mjs", import.meta.url));
+const cli = fileURLToPath(new URL("omp-context-stats.mjs", import.meta.url));
 const event = (type, fields = {}) => ({ payload: { type, ...fields }, type: "event_msg" });
 const usage = (input, cached) => ({ input_tokens: input, cached_input_tokens: cached });
 const sample = (last, total, window) => event("token_count", {
@@ -14,7 +14,7 @@ const sample = (last, total, window) => event("token_count", {
 });
 
 function fixture(t, records) {
-  const dir = mkdtempSync(join(tmpdir(), "codex-context-stats-"));
+  const dir = mkdtempSync(join(tmpdir(), "omp-context-stats-"));
   const path = join(dir, "rollout.jsonl");
   const lines = records.map(record => typeof record === "string" ? record : JSON.stringify(record));
   writeFileSync(path, `${lines.join("\n")}\n`);

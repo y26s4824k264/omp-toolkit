@@ -2,7 +2,7 @@
 set -euo pipefail
 
 upstream_url=https://github.com/can1357/oh-my-pi.git
-upstream_commit=57771ae562b9345e0579bceb2d68d585e3e6927e
+upstream_commit=a7135b8f31826c878734388b648f52bed8da436e
 toolkit_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 prefix="$HOME/.local/omp-toolkit-source"
 build_dir="$toolkit_dir/target"
@@ -89,14 +89,14 @@ cp "$toolkit_dir/src/log_preview.rs" "$shell_example/log_preview.rs"
 
 payload="$stage_dir/payload"
 mkdir -p "$payload/bin" "$payload/runtime/debug" "$payload/runtime/lsp/servers" \
-    "$payload/runtime/profile" "$payload/runtime/stats" "$payload/runtime/licenses"
-for runtime_component in debug lsp; do
-    for runtime_file in "$toolkit_dir/$runtime_component/"*.mjs "$toolkit_dir/$runtime_component/"*.json "$toolkit_dir/$runtime_component/UPSTREAM.md"; do
-        [[ -f "$runtime_file" && "$runtime_file" != *.test.mjs ]] || continue
+    "$payload/runtime/profile" "$payload/runtime/stats" "$payload/runtime/licenses" "$payload/runtime/magic"
+for runtime_component in debug lsp magic; do
+    for runtime_file in "$toolkit_dir/$runtime_component/"{*.mjs,*.json,*.ts,*.md}; do
+        [[ -f "$runtime_file" && "$runtime_file" != *.test.mjs && "$runtime_file" != *.test.ts ]] || continue
         cp "$runtime_file" "$payload/runtime/$runtime_component/"
     done
 done
-cp "$toolkit_dir/stats/codex-context-stats.mjs" "$payload/runtime/stats/"
+cp "$toolkit_dir/stats/omp-context-stats.mjs" "$payload/runtime/stats/"
 cp -R "$toolkit_dir/profile/." "$payload/runtime/profile/"
 cp "$toolkit_dir/lsp/servers/"{package,package-lock}.json "$payload/runtime/lsp/servers/"
 if "$with_lsp_servers"; then
@@ -144,14 +144,12 @@ write_launcher() {
 
 write_launcher omp-lsp lsp/omp-lsp.mjs
 write_launcher omp-debug debug/omp-debug.mjs
-write_launcher codex-context-stats stats/codex-context-stats.mjs
+write_launcher omp-magic magic/omp-magic.mjs
+write_launcher omp-context-stats stats/omp-context-stats.mjs
 
 mkdir -p -- "$bin_dir" "$runtime_dir"
 cp -R "$payload/runtime/." "$runtime_dir/"
 install -m 755 "$payload/bin/"* "$bin_dir/"
-if [[ ! -e "$bin_dir/omp-codex-mcp" && ! -L "$bin_dir/omp-codex-mcp" ]]; then
-    ln -s omp-toolkit-mcp "$bin_dir/omp-codex-mcp"
-fi
 
 printf '\nInstalled OMP toolkit in %s\n' "$prefix"
 # shellcheck disable=SC2016

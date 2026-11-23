@@ -4,11 +4,13 @@ English · [简体中文](README.zh-CN.md)
 
 Use standalone AST editing, Hashline, shell, LSP, and debugging tools in WorkBuddy, Codex, Claude, other coding agents, and the terminal. The local stdio MCP server reads source files, inspects logs, and previews patches. `omp-refactor` generates patches directly and writes diagnostics to stderr. Review each patch before applying it with Git.
 
-The Rust engines and language-server defaults are extracted from [Oh My Pi v19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0), pinned at build time to `57771ae562b9345e0579bceb2d68d585e3e6927e`. The installed toolkit runs independently of the Oh My Pi application or any model account.
+The base Rust editing engines and language-server defaults come from Oh My Pi v19.0.0 (`57771ae562b9345e0579bceb2d68d585e3e6927e`). Shell and `obash` build from v19.1.0 (`a7135b8f31826c878734388b648f52bed8da436e`), which also supplies selected filesystem and editing fixes. The installed toolkit runs independently of the Oh My Pi application or any model account. [v19.0.0 source](https://github.com/can1357/oh-my-pi/tree/57771ae562b9345e0579bceb2d68d585e3e6927e) · [v19.1.0 source](https://github.com/can1357/oh-my-pi/tree/a7135b8f31826c878734388b648f52bed8da436e)
 
 ## Install
 
 Download and run the script for your system from [GitHub Releases](https://github.com/y26s4824k264/omp-toolkit/releases/latest). The installer checks the archive's SHA-256, reuses a compatible Node.js and npm or downloads a verified copy, and installs the locked common language servers. Git is used to check and apply patches and for LSP rename previews.
+
+The commands below install the published v0.2.0 bundles. Build this branch from source for Magic and Sloppy previews, the `learn` commands, and the `omp-context-stats` command name.
 
 You can also give your coding agent this instruction.
 
@@ -37,6 +39,8 @@ The installer detects accessible local Codex and Claude Code CLIs and adds the M
 
 The new default install directory is separate from the `v0.1.0` source installation. To switch clients to the new installation, replace the previous `omp` entry with the new one. If the installer cannot configure a client, it prints the command to run in your terminal.
 
+For a manually configured entry that uses an older executable alias, switch its command to `omp-toolkit-mcp` before upgrading that installation in place.
+
 ### Platforms and features
 
 | System | Release architectures | Requirements |
@@ -52,11 +56,12 @@ Prebuilt macOS packages use the system `open` command for opening files and URLs
 | Command | Purpose |
 | --- | --- |
 | `omp-toolkit-mcp` | 10 stdio MCP tools for AST, Hashline, logs, service readiness, and performance reports |
-| `omp-refactor` | Structural search, patch previews, and source summaries |
+| `omp-refactor` | Structural search, patch previews, source summaries, and reusable lessons |
+| `omp-magic` | Prepare described edits for your agent and preview its line operations |
 | `omp-shell`, `obash` | Shell execution, log summaries, and Bash parsing |
 | `omp-lsp` | Diagnostics, navigation, and semantic rename previews |
 | `omp-debug` | Task-scoped breakpoint debugging through DAP |
-| `codex-context-stats` | Local token usage stats from a specified Codex session log |
+| `omp-context-stats` | Local token usage adapter for Codex rollout logs |
 
 ## Connect a coding agent
 
@@ -110,6 +115,34 @@ PUT 12.=12:
 
 Run `omp-refactor hashline --patch edits.txt src/a.ts` to generate a Git patch. Hashline handles existing text files and checks the current tag before preparing edits. Read new anchors after any source change. Use your project's regular editing tools to create, move, or remove files.
 
+## Sloppy and Magic edit previews
+
+Sloppy uses OMP's native anchor matching for text changes and syntax-aware block operations. List every file named in the patch. A failed operation rejects the batch. See the [Sloppy syntax](https://github.com/can1357/oh-my-pi/blob/v19.1.0/crates/edit/prompts/sloppy.md) for block selectors, cuts, and pastes.
+
+```sh
+printf '%s\n' '*** Edit File: src/a.ts' '*** Find' 'oldCall(7)' '*** Replace' 'newCall(7)' > change.edit
+omp-refactor sloppy --patch change.edit src/a.ts > change.patch
+git apply --check -- change.patch
+```
+
+Magic starts from a short description grouped by `# relative/path`. `prepare` saves a numbered source view and digest for each file. Give the plan's `systemPrompt` and each file's `request` to your coding agent. The agent supplies the official Magic line operations in `replies.json`. `preview` validates all operations against the original snapshot and emits a Git patch for review. Use `--full` with `prepare` when the excerpt omits lines needed for the change.
+
+```sh
+printf '%s\n' '# src/a.ts' '- Replace oldCall with newCall on line 1.' > changes.md
+omp-magic prepare --root . --instructions changes.md > plan.json
+```
+
+```json
+{"replies":[{"path":"src/a.ts","operations":"[\"sub\",1,\"oldCall\",\"newCall\"]"}]}
+```
+
+```sh
+omp-magic preview --root . --plan plan.json --replies replies.json > change.patch
+git apply --check -- change.patch
+```
+
+Both previews work on existing text files and preserve uniform LF or CRLF line endings. Your agent handles model requests and decides whether to apply the reviewed patch.
+
 ## Build from source
 
 On macOS or Linux, the source installer needs Git, Rustup, system build tools, and Node.js 24+. The common language servers also require npm in this build mode.
@@ -130,7 +163,7 @@ The binary is in `target/release/omp-refactor`. It uses Git at runtime.
 
 ## Shell commands and logs
 
-`omp-shell` calls OMP 19.0.0's native process shell, with Bash, Zsh, POSIX sh, and native exit codes on supported platforms. `obash` is the upstream command for executing, parsing, or tracing Bash. [Rust process shell](https://github.com/can1357/oh-my-pi/blob/v19.0.0/crates/shell/src/process/mod.rs) · [obash source](https://github.com/can1357/oh-my-pi/blob/v19.0.0/crates/shell/src/bin/obash/main.rs)
+`omp-shell` calls Oh My Pi v19.1.0's native process shell, with Bash, Zsh, POSIX sh, and native exit codes on supported platforms. `obash` is the upstream command for executing, parsing, or tracing Bash. [Rust process shell](https://github.com/can1357/oh-my-pi/blob/v19.1.0/crates/shell/src/process/mod.rs) · [obash source](https://github.com/can1357/oh-my-pi/blob/v19.1.0/crates/shell/src/bin/obash/main.rs)
 
 ```sh
 omp-shell bash -c 'printf "%s\n" alpha beta | grep alpha'
@@ -154,7 +187,7 @@ go test ./... > "$log_file" 2>&1 || test_status=$?
 omp-shell minimize "$log_file" "$test_status" 'go test ./...'
 ```
 
-To build the shell manually, copy `shell/omp_shell_cli.rs` as `main.rs` and `src/log_preview.rs` as `log_preview.rs` into the upstream v19.0.0 directory `crates/shell/examples/omp_shell_cli/`. Then run these commands from the upstream repository root.
+To build the shell manually, copy `shell/omp_shell_cli.rs` as `main.rs` and `src/log_preview.rs` as `log_preview.rs` into the upstream v19.1.0 directory `crates/shell/examples/omp_shell_cli/`. Then run these commands from the upstream repository root.
 
 ```sh
 cargo build --locked --profile ci -p omp-shell --example omp_shell_cli
@@ -187,7 +220,7 @@ The stdio entry point is `omp-toolkit-mcp`. In Codex, look for the `mcp__omp__` 
 | `log_minimize` | Summarize an existing command log, preserving its path and exit code | `root`, `file`, `command`, `exit_code` |
 | `service_ready` | Wait for a local port or startup log and detect early process exit | `root`. Provide `port`, the log fields `log`/`log_pattern`/`log_offset`, or both. `pid` and `timeout_ms` are optional. |
 | `profile_summary` | Summarize a V8 CPU profile or macOS `sample` report | `root`, `file` |
-| `token_count` | Estimate file tokens with local tokenizers | `root`, `file`. Use `codex-context-stats` for actual Codex request usage. |
+| `token_count` | Estimate file tokens with local tokenizers | `root`, `file`. Use `omp-context-stats` to measure request usage from a Codex rollout log. |
 
 To inspect repeated calls first, call `ast_find`.
 
@@ -277,12 +310,24 @@ omp-debug --session "$session" step over
 omp-debug --session "$session" stop
 ```
 
-### Codex context usage
+### Reusable lessons and skill drafts
 
-`codex-context-stats` reads the specified Codex JSONL file with Node.js. It reports input and cached tokens for the first model request, the share of the context window used, and input growth across later requests in the same turn. Use `--turns` to list turns and `--requests` for individual requests. `--turn` takes a 1-based turn number or a turn ID.
+Save a reusable lesson proposed by your coding agent, or turn a reviewed Markdown procedure into a portable `SKILL.md` draft. The tool uses the project-local `.omp-toolkit/learning` directory. `preview` prints the draft. `create` writes a new draft, and `update` explicitly replaces an existing draft. Review the contents before copying the skill directory into a client's skills location.
 
 ```sh
-codex-context-stats --turn 1 --requests /absolute/path/to/rollout.jsonl
+omp-refactor --root . learn save 'Check the complete Git patch before applying it.'
+omp-refactor --root . learn list
+omp-refactor --root . learn skill preview patch-review --description 'Review a Git patch before applying it' --body-file ./patch-review.md
+```
+
+Use `--body-file -` to read the Markdown body from standard input. Your coding agent decides what to record. The tool processes the supplied text locally.
+
+### Context usage
+
+`omp-context-stats` uses Node.js to read the specified Codex rollout JSONL, the log format this adapter supports. It reports input and cached tokens for the first model request, the share of the context window used, and input growth across later requests in the same turn. Use `--turns` to list turns and `--requests` for individual requests. `--turn` takes a 1-based turn number or a turn ID.
+
+```sh
+omp-context-stats --turn 1 --requests /absolute/path/to/rollout.jsonl
 ```
 
 ## License

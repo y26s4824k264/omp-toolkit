@@ -13,7 +13,10 @@ use clap::{Parser, Subcommand};
 mod discovery;
 mod git_patch;
 mod hashline;
+mod learn;
+mod magic_native;
 mod ranked_find;
+mod sloppy;
 mod structural;
 mod token_count;
 
@@ -42,6 +45,13 @@ enum EditCommand {
     },
     /// Preview a Hashline patch for the listed files without modifying them.
     Hashline {
+        #[arg(long)]
+        patch: PathBuf,
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
+    /// Preview anchored Find/Replace or AST block commands for the listed files.
+    Sloppy {
         #[arg(long)]
         patch: PathBuf,
         #[arg(required = true)]
@@ -81,6 +91,18 @@ enum EditCommand {
         #[arg(long, default_value_t = 12)]
         limit: usize,
     },
+    /// Save reusable project lessons and prepare portable skill drafts.
+    Learn {
+        #[command(subcommand)]
+        command: learn::Command,
+    },
+    #[command(hide = true)]
+    EditSnapshot {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
+    #[command(hide = true)]
+    EditSnapshotPreview,
 }
 
 pub(crate) struct Change {
@@ -99,6 +121,11 @@ fn main() -> Result<()> {
             let patch = fs::read_to_string(&patch)
                 .with_context(|| format!("read patch {}", patch.display()))?;
             hashline::preview(&root, &patch, &files)?
+        }
+        EditCommand::Sloppy { patch, files } => {
+            let patch = fs::read_to_string(&patch)
+                .with_context(|| format!("read patch {}", patch.display()))?;
+            sloppy::preview(&root, &patch, &files)?
         }
         EditCommand::Ast {
             lang,
@@ -119,6 +146,9 @@ fn main() -> Result<()> {
         EditCommand::RankedFind { query, limit } => {
             return ranked_find::ranked_find(&root, &query, limit);
         }
+        EditCommand::Learn { command } => return learn::run(&root, command),
+        EditCommand::EditSnapshot { files } => return magic_native::snapshot(&root, &files),
+        EditCommand::EditSnapshotPreview => magic_native::preview(&root, io::stdin().lock())?,
         EditCommand::TokenCount { file } => {
             println!("{}", token_count::count_file(&root.join(file))?);
             return Ok(());
@@ -128,6 +158,18 @@ fn main() -> Result<()> {
 }
 
 pub(crate) fn read_project_file(root: &Path, path: &Path) -> Result<(PathBuf, String)> {
+    let absolute = resolve_project_file(root, path)?;
+    let source = fs::read_to_string(&absolute)
+        .with_context(|| format!("read UTF-8 source {}", path.display()))?;
+    ensure!(
+        !source.contains('\0'),
+        "expected text source: {}",
+        path.display()
+    );
+    Ok((absolute, source))
+}
+
+fn resolve_project_file(root: &Path, path: &Path) -> Result<PathBuf> {
     let mut absolute = root.to_path_buf();
     for component in path.components() {
         match component {
@@ -142,7 +184,7 @@ pub(crate) fn read_project_file(root: &Path, path: &Path) -> Result<(PathBuf, St
             .symlink_metadata()
             .with_context(|| format!("inspect {}", absolute.display()))?;
         ensure!(
-            !metadata.is_symlink(),
+            !is_path_redirect(&metadata),
             "symbolic links are excluded: {}",
             absolute.display()
         );
@@ -152,14 +194,30 @@ pub(crate) fn read_project_file(root: &Path, path: &Path) -> Result<(PathBuf, St
         "expected an existing file: {}",
         path.display()
     );
-    let source = fs::read_to_string(&absolute)
-        .with_context(|| format!("read UTF-8 source {}", path.display()))?;
-    ensure!(
-        !source.contains('\0'),
-        "expected text source: {}",
-        path.display()
-    );
-    Ok((absolute, source))
+    Ok(absolute)
+}
+
+fn is_path_redirect(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    metadata.is_symlink()
+}
+
+pub(crate) fn edit_path_policy(root: &Path) -> omp_edit::PathPolicy {
+    omp_edit::PathPolicy {
+        cwd: root.to_owned(),
+        home_dir: root.to_owned(),
+        url_schemes: Vec::new(),
+        url_alias_schemes: Vec::new(),
+        plan_writable_roots: Vec::new(),
+        plan_active: false,
+        block_auto_generated: true,
+    }
 }
 
 fn emit_patch(root: &Path, mut changes: Vec<Change>) -> Result<()> {

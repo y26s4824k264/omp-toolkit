@@ -21,7 +21,7 @@ use omp_edit::{
     text::{detect_line_ending, normalize_to_lf, strip_bom},
 };
 
-use crate::{Change, read_project_file};
+use crate::{Change, edit_path_policy, read_project_file};
 
 pub(crate) fn read(root: &Path, file: &Path, start: usize, end: Option<usize>) -> Result<()> {
     let (absolute, raw) = read_project_file(root, file)?;
@@ -188,15 +188,7 @@ struct Snapshots {
 impl Snapshots {
     fn new(root: &Path) -> Self {
         Self {
-            policy: PathPolicy {
-                cwd: root.to_owned(),
-                home_dir: root.to_owned(),
-                url_schemes: Vec::new(),
-                url_alias_schemes: Vec::new(),
-                plan_writable_roots: Vec::new(),
-                plan_active: false,
-                block_auto_generated: true,
-            },
+            policy: edit_path_policy(root),
             files: BTreeMap::new(),
         }
     }

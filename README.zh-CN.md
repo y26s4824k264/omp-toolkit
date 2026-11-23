@@ -4,11 +4,13 @@
 
 在 WorkBuddy、Codex、Claude 等编程智能体和终端中使用独立的 AST、Hashline、Shell、LSP 与调试工具。MCP 服务以本地 stdio 运行，提供源码读取、日志检查和补丁预览。`omp-refactor` 直接生成补丁，诊断写到标准错误。审阅后用 Git 应用补丁。
 
-Rust 引擎和语言服务器默认配置提取自 [Oh My Pi v19.0.0](https://github.com/can1357/oh-my-pi/tree/v19.0.0)，构建来源固定在 `57771ae562b9345e0579bceb2d68d585e3e6927e`。安装后的工具可独立运行，无需启动 Oh My Pi 或登录模型账户。
+基础 Rust 编辑引擎和语言服务器默认配置来自 Oh My Pi v19.0.0（`57771ae562b9345e0579bceb2d68d585e3e6927e`）。Shell 和 `obash` 从 v19.1.0（`a7135b8f31826c878734388b648f52bed8da436e`）构建，工具也使用该版本中的部分文件系统与编辑修复。安装后的工具可独立运行，无需启动 Oh My Pi 或登录模型账户。 [v19.0.0 源码](https://github.com/can1357/oh-my-pi/tree/57771ae562b9345e0579bceb2d68d585e3e6927e) · [v19.1.0 源码](https://github.com/can1357/oh-my-pi/tree/a7135b8f31826c878734388b648f52bed8da436e)
 
 ## 安装
 
 从 [GitHub Releases](https://github.com/y26s4824k264/omp-toolkit/releases/latest) 下载并运行适合当前系统的脚本。安装器校验发行包的 SHA-256，复用兼容的 Node.js 与 npm 或下载并校验官方运行时，并安装锁定版本的常见语言服务器。检查和应用补丁、LSP 重命名预览时使用 Git。
+
+下面的命令安装已发布的 v0.2.0。Magic 和 Sloppy 编辑预览、`learn` 子命令及新的 `omp-context-stats` 命令名，需要从当前分支构建。
 
 也可以把下面这句话交给当前的编程智能体执行。
 
@@ -37,6 +39,8 @@ Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/r
 
 新版本的默认安装目录与 `v0.1.0` 源码版分开。切换到新安装时，将客户端中旧的 `omp` 条目换成新生成的条目。安装器无法自动接入时会打印可在终端执行的命令。
 
+如果手动配置的 MCP 条目指向早期可执行文件别名，原地升级前请把启动命令切到 `omp-toolkit-mcp`。
+
 ### 系统与功能
 
 | 系统 | 发行包架构 | 系统要求 |
@@ -52,11 +56,12 @@ macOS 预编译包使用系统自带的 `open` 打开文件和网址。
 | 入口 | 功能 |
 | --- | --- |
 | `omp-toolkit-mcp` | 10 个 stdio MCP 工具，包括 AST、Hashline、日志、服务就绪和性能报告 |
-| `omp-refactor` | 结构化搜索、补丁预览和源码摘要 |
+| `omp-refactor` | 结构化搜索、补丁预览、源码摘要和经验积累 |
+| `omp-magic` | 为智能体准备描述式编辑，并预览它返回的行操作 |
 | `omp-shell`、`obash` | Shell 执行、日志摘要和 Bash 语法解析 |
 | `omp-lsp` | 多语言诊断、导航和语义重命名预览 |
 | `omp-debug` | 基于 DAP 的任务级断点调试 |
-| `codex-context-stats` | 读取指定会话日志的本地 token 用量统计 |
+| `omp-context-stats` | 通过 Codex 会话日志统计实际 token 用量 |
 
 ## 接入编程智能体
 
@@ -112,6 +117,34 @@ PUT 12.=12:
 
 `omp-refactor hashline --patch edits.txt src/a.ts` 生成同样的 Git 补丁。该入口处理既有普通文本文件，使用当前文件标签验证位置。文件变化后，重新读取目标行并生成补丁。文件创建、移动和删除使用项目现有编辑工具。
 
+## Sloppy 和 Magic 编辑预览
+
+Sloppy 使用 OMP 原生的锚点匹配，支持文本改动和按语法定位的代码块操作。调用时列出补丁中的每个文件。任一操作失败会拒绝整批改动。块选择器、剪切和粘贴见 [Sloppy 语法](https://github.com/can1357/oh-my-pi/blob/v19.1.0/crates/edit/prompts/sloppy.md)。
+
+```sh
+printf '%s\n' '*** Edit File: src/a.ts' '*** Find' 'oldCall(7)' '*** Replace' 'newCall(7)' > change.edit
+omp-refactor sloppy --patch change.edit src/a.ts > change.patch
+git apply --check -- change.patch
+```
+
+Magic 按 `# 相对路径` 分组描述改动。`prepare` 为每个文件生成带行号的源码和快照摘要。把计划里的 `systemPrompt` 和每个文件的 `request` 交给编程智能体，再把它给出的官方 Magic 行操作保存到 `replies.json`。`preview` 核对原始快照和全部操作，生成可审阅的 Git 补丁。如果摘录省略了需要改动的行，可以用 `prepare --full` 重新生成计划。
+
+```sh
+printf '%s\n' '# src/a.ts' '- Replace oldCall with newCall on line 1.' > changes.md
+omp-magic prepare --root . --instructions changes.md > plan.json
+```
+
+```json
+{"replies":[{"path":"src/a.ts","operations":"[\"sub\",1,\"oldCall\",\"newCall\"]"}]}
+```
+
+```sh
+omp-magic preview --root . --plan plan.json --replies replies.json > change.patch
+git apply --check -- change.patch
+```
+
+两种预览都针对已有文本文件，保留统一的 LF 或 CRLF 换行。模型调用和是否应用补丁由当前智能体处理。
+
 ## 从源码构建
 
 macOS 和 Linux 源码安装需要 Git、Rustup、系统编译工具和 Node.js 24+。使用源码安装器装常见语言服务器时还需要 npm。
@@ -132,7 +165,7 @@ cargo build --release --locked -p omp-refactor
 
 ## 独立命令行
 
-`omp-shell` 直接调用 OMP 19.0.0 的原生进程 Shell，支持 Bash、Zsh、POSIX sh 和原生退出码。`obash` 是同一源码中的独立测试与基准入口，可执行 Bash、只解析语法或记录运行轨迹。 [Rust 进程 Shell](https://github.com/can1357/oh-my-pi/blob/v19.0.0/crates/shell/src/process/mod.rs) · [obash 源码](https://github.com/can1357/oh-my-pi/blob/v19.0.0/crates/shell/src/bin/obash/main.rs)
+`omp-shell` 直接调用 Oh My Pi v19.1.0 的原生进程 Shell，支持 Bash、Zsh、POSIX sh 和原生退出码。`obash` 是同一源码中的独立测试与基准入口，可执行 Bash、只解析语法或记录运行轨迹。 [Rust 进程 Shell](https://github.com/can1357/oh-my-pi/blob/v19.1.0/crates/shell/src/process/mod.rs) · [obash 源码](https://github.com/can1357/oh-my-pi/blob/v19.1.0/crates/shell/src/bin/obash/main.rs)
 
 ```sh
 omp-shell bash -c 'printf "%s\n" alpha beta | grep alpha'
@@ -156,7 +189,7 @@ go test ./... > "$log_file" 2>&1 || test_status=$?
 omp-shell minimize "$log_file" "$test_status" 'go test ./...'
 ```
 
-构建时，在 v19.0.0 源码的 `crates/shell/examples/omp_shell_cli/` 下将 `shell/omp_shell_cli.rs` 放为 `main.rs`，将 `src/log_preview.rs` 放为 `log_preview.rs`，再在上游根目录构建。
+构建时，在 v19.1.0 源码的 `crates/shell/examples/omp_shell_cli/` 下将 `shell/omp_shell_cli.rs` 放为 `main.rs`，将 `src/log_preview.rs` 放为 `log_preview.rs`，再在上游根目录构建。
 
 ```sh
 cargo build --locked --profile ci -p omp-shell --example omp_shell_cli
@@ -189,7 +222,7 @@ stdio MCP 启动命令为 `omp-toolkit-mcp`。在 Codex 的工具发现中搜索
 | `log_minimize` | 从已有日志生成短摘要，保留原始路径和退出码 | `root`、`file`、`command`、`exit_code` |
 | `service_ready` | 等待本机端口或启动日志，可检测进程退出 | `root`。传 `port`、日志三件套 `log`/`log_pattern`/`log_offset` 或两者。可选 `pid`、`timeout_ms` |
 | `profile_summary` | 摘要 V8 CPU profile 或 macOS `sample` | `root`、`file` |
-| `token_count` | 按若干本地 tokenizer 估算文件 token | `root`、`file`。实测 Codex 首轮用量用 `codex-context-stats` |
+| `token_count` | 按若干本地 tokenizer 估算文件 token | `root`、`file`。用 `omp-context-stats` 读取 Codex 会话日志中的实际用量 |
 
 例如，要先盘点重复调用，选择 `ast_find` 并提交下列参数。
 
@@ -279,12 +312,24 @@ omp-debug --session "$session" step over
 omp-debug --session "$session" stop
 ```
 
-### Codex 上下文用量
+### 经验积累与技能草稿
 
-`codex-context-stats` 用 Node 读取显式指定的 Codex 会话 JSONL。输出首个模型请求的输入和缓存 token、上下文占比，以及同一轮内后续请求的输入增长。`--turns` 展开轮次，`--requests` 展开逐请求用量，`--turn` 可指定 1 开始的轮次编号或轮次 ID。
+可以保存编程智能体总结的可复用经验，也可以把审阅过的 Markdown 流程整理成可移植的 `SKILL.md` 草稿。工具使用项目内的 `.omp-toolkit/learning`。`preview` 在终端展示草稿，`create` 写入新草稿，`update` 显式替换已有草稿。审阅后可把整个技能目录复制到所用客户端的技能目录。
 
 ```sh
-codex-context-stats --turn 1 --requests /absolute/path/to/rollout.jsonl
+omp-refactor --root . learn save 'Check the complete Git patch before applying it.'
+omp-refactor --root . learn list
+omp-refactor --root . learn skill preview patch-review --description 'Review a Git patch before applying it' --body-file ./patch-review.md
+```
+
+用 `--body-file -` 可从标准输入读取 Markdown 正文。要积累的内容由当前编程智能体决定，工具在本地处理传入的文本。
+
+### 上下文用量
+
+`omp-context-stats` 用 Node 读取显式指定的会话日志，目前支持 Codex rollout JSONL 格式。输出首个模型请求的输入和缓存 token、上下文占比，以及同一轮内后续请求的输入增长。`--turns` 展开轮次，`--requests` 展开逐请求用量，`--turn` 可指定 1 开始的轮次编号或轮次 ID。
+
+```sh
+omp-context-stats --turn 1 --requests /absolute/path/to/rollout.jsonl
 ```
 
 ## 许可

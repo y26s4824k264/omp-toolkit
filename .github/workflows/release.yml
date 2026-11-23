@@ -17,7 +17,7 @@ permissions:
 env:
   TOOLCHAIN: nightly-2026-11-08
   UPSTREAM_REPOSITORY: https://github.com/can1357/oh-my-pi.git
-  UPSTREAM_COMMIT: 57771ae562b9345e0579bceb2d68d585e3e6927e
+  UPSTREAM_COMMIT: a7135b8f31826c878734388b648f52bed8da436e
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -84,7 +84,7 @@ jobs:
           node scripts/prepare-shell.mjs
       - name: Adapter tests and build
         run: |
-          cargo test --locked --release -p omp-refactor -p omp-offline-claude
+          cargo test --locked --release -p omp-refactor -p omp-offline-claude -p omp-edit -p omp-xfs
           cargo build --locked --release -p omp-refactor --bins --message-format=json-render-diagnostics > target/toolkit-build.jsonl
       - name: Build Shell and obash
         working-directory: target/upstream-source
@@ -96,7 +96,8 @@ jobs:
         env:
           RUST_TARGET: ${{ matrix.target }}
         run: |
-          node --test scripts/install-release.test.mjs
+          refactor_bin=$(node -p 'require("node:path").resolve("target", "release", "omp-refactor" + (process.platform === "win32" ? ".exe" : ""))')
+          OMP_REFACTOR_BIN="$refactor_bin" node --test scripts/install-release.test.mjs magic/omp-magic.test.mjs
           node --test --test-name-pattern 'pause waits until' debug/omp-debug.test.mjs
           node scripts/package-release.mjs "$RUST_TARGET"
           node scripts/smoke-release.mjs

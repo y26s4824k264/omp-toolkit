@@ -4,7 +4,7 @@ version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Standalone Oh My Pi editing tools and stdio MCP adapter for Codex"
+description = "Standalone code search, patch previews, and stdio MCP tools for coding agents"
 repository = "https://github.com/y26s4824k264/omp-toolkit"
 
 [[bin]]

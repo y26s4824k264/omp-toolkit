@@ -3,9 +3,9 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 
-const help = `Usage: codex-context-stats [--turns] [--requests] [--turn INDEX_OR_ID] ROLLOUT.jsonl
+const help = `Usage: omp-context-stats [--turns] [--requests] [--turn INDEX_OR_ID] ROLLOUT.jsonl
 
-Report observed Codex request usage as JSON. --turns includes per-turn usage,
+Report observed request usage from a Codex rollout JSONL file. --turns includes per-turn usage,
 --requests includes each measured request, and --turn selects one turn.
 Input growth compares recorded request input sizes. A context window is a
 model capacity, and cumulative token usage alone cannot identify a request.
@@ -202,6 +202,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(`codex-context-stats: ${error.message}`);
+  console.error(`omp-context-stats: ${error.message}`);
   process.exitCode = 1;
 });

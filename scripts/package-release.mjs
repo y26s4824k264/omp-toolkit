@@ -42,17 +42,17 @@ try {
         copy(from + suffix, to);
         if (!windows) chmodSync(to, 0o755);
     }
-    for (const component of ['debug', 'lsp']) {
+    for (const component of ['debug', 'lsp', 'magic']) {
         for (const file of readdirSync(join(root, component), { withFileTypes: true })) {
-            const runtimeFile = /\.(mjs|json)$/.test(file.name) && !file.name.endsWith('.test.mjs');
-            if (file.isFile() && (runtimeFile || file.name === 'UPSTREAM.md')) {
+            const runtimeFile = /\.(mjs|json|ts|md)$/.test(file.name) && !/\.test\.(mjs|ts)$/.test(file.name);
+            if (file.isFile() && runtimeFile) {
                 copy(join(root, component, file.name), join(runtime, component, file.name));
             }
         }
     }
     for (const file of [
         'lsp/servers/package.json', 'lsp/servers/package-lock.json',
-        'profile', 'stats/codex-context-stats.mjs', 'THIRD_PARTY_NOTICES.md',
+        'profile', 'stats/omp-context-stats.mjs', 'THIRD_PARTY_NOTICES.md',
     ]) {
         copy(join(root, file), join(runtime, file));
     }

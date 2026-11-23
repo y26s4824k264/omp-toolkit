@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -26,8 +26,8 @@ async function fixture(t, entries = {}) {
     await writeFile(join(payload, "bin", name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   }
   for (const [dir, file] of [
-    ["lsp", "omp-lsp.mjs"], ["debug", "omp-debug.mjs"], ["stats", "codex-context-stats.mjs"],
-    ["profile", "summary.mjs"],
+    ["lsp", "omp-lsp.mjs"], ["debug", "omp-debug.mjs"], ["stats", "omp-context-stats.mjs"],
+    ["profile", "summary.mjs"], ["magic", "omp-magic.mjs"],
   ]) {
     await mkdir(join(payload, "runtime", dir), { recursive: true });
     await writeFile(join(payload, "runtime", dir, file), "console.log(JSON.stringify(process.argv.slice(2)))\n");
@@ -61,7 +61,8 @@ test("installs and re-installs with quoted paths and relative client settings", 
     "--bin-dir", join(prefix, "bin"), "--node", await realpath(process.execPath),
     "--profile-helper", join(prefix, "runtime", "profile", "summary.mjs"),
   ]);
-  const tool = run(join(prefix, "bin", "codex-context-stats"), ["argument with spaces", "$literal"]);
+  await assert.rejects(lstat(join(prefix, "bin", "omp-codex-mcp")), { code: "ENOENT" });
+  const tool = run(join(prefix, "bin", "omp-context-stats"), ["argument with spaces", "$literal"]);
   assert.equal(tool.status, 0, tool.stderr);
   assert.deepEqual(JSON.parse(tool.stdout), ["argument with spaces", "$literal"]);
   const lsp = run(join(prefix, "bin", "omp-lsp"), ["catalog"]);
@@ -74,7 +75,7 @@ test("installs and re-installs with quoted paths and relative client settings", 
   const corrupt = install();
   assert.equal(corrupt.status, 1);
   assert.match(corrupt.stderr, /SHA-256 verification failed/);
-  assert.equal(run(join(prefix, "bin", "codex-context-stats"), []).status, 0);
+  assert.equal(run(join(prefix, "bin", "omp-context-stats"), []).status, 0);
 });
 
 test("protects existing directories and rejects unrelated archive entries", { skip: windows }, async t => {

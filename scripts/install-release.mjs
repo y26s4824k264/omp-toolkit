@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
 import {
   access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir,
-  stat, symlink, writeFile,
+  stat, writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -27,9 +27,10 @@ const instructions = [
   "",
   "- For short commands and basic lookups, call the native tools directly. Use `rg` for file and text search and `git` for repository state and diffs.",
   "- For a code question with several keywords and no known file, use `omp-refactor ranked-find \"keywords\"` to rank files and read the matching lines.",
-  "- Prefer the `omp` MCP server for structural search and edits. Use `ast_find` for syntax matches, `ast_preview` for rewrites, and `hashline_read` / `hashline_preview` for exact-line changes. Inspect the saved full patch and run `git apply --check` before applying. Refresh the preview when source files change.",
+  "- Prefer the `omp` MCP server for structural search and patch previews. Use `ast_find` for syntax matches, `ast_preview` for rewrite previews, and `hashline_read` / `hashline_preview` for exact-line previews. Inspect the saved full patch and run `git apply --check` before applying. Refresh the preview when source files change.",
   "- Run multi-step shell work in a task-specific persistent PTY through `omp-shell`. Use `omp-shell run-log -- COMMAND ARGS...` to retain the original log and exit code for long commands. Use `log_minimize` for logs already on disk.",
   "- Use `omp-lsp check` for available language-server diagnostics. Treat missing servers, timeouts, and incomplete reports as unverified. Use `service_ready` for loopback or launch-log checks.",
+  "- When the user asks to retain a reusable project lesson, use `omp-refactor learn save`. Use `omp-refactor learn skill preview` to render a portable skill draft before writing it locally.",
   "",
 ].join("\n");
 
@@ -182,7 +183,8 @@ async function writeLaunchers(stage, prefix, node) {
   const launchers = [
     ["omp-lsp", "lsp/omp-lsp.mjs"],
     ["omp-debug", "debug/omp-debug.mjs"],
-    ["codex-context-stats", "stats/codex-context-stats.mjs"],
+    ["omp-magic", "magic/omp-magic.mjs"],
+    ["omp-context-stats", "stats/omp-context-stats.mjs"],
   ];
   const dispatcher = [
     'import { fileURLToPath } from "node:url";',
@@ -474,7 +476,8 @@ async function install(options) {
       if (!(await state(join(stage, "bin", name + exe)))?.isFile()) throw new Error("Archive is missing " + name);
     }
     for (const module of [
-      "lsp/omp-lsp.mjs", "debug/omp-debug.mjs", "stats/codex-context-stats.mjs", "profile/summary.mjs",
+      "lsp/omp-lsp.mjs", "debug/omp-debug.mjs", "magic/omp-magic.mjs",
+      "stats/omp-context-stats.mjs", "profile/summary.mjs",
     ]) {
       if (!(await state(join(stage, "runtime", module)))?.isFile()) throw new Error("Archive is missing " + module);
     }
@@ -490,7 +493,6 @@ async function install(options) {
     }
     await languageServers(options, stage);
     await writeLaunchers(stage, prefix, node);
-    if (!windows) await symlink(serverName, join(stage, "bin", "omp-codex-mcp"));
 
     const bin = join(prefix, "bin");
     const config = {
