@@ -81,6 +81,12 @@ download() {
         --retry 2 --connect-timeout 15 --max-time 300 --output "$2" "$1"
 }
 
+if [[ "$version" == latest ]]; then
+    download "https://github.com/$repo/releases/latest/download/VERSION" "$stage_dir/VERSION"
+    version=$(LC_ALL=C awk 'NR == 1 { sub(/\r$/, ""); tag = $0 } END { if (NR == 1) print tag }' "$stage_dir/VERSION")
+    valid_tag "$version" || die 'GitHub returned an invalid release tag'
+fi
+
 verify() {
     local expected actual
     expected=$(awk -v asset="$2" '$2 == asset || $2 == "*" asset { print tolower($1) }' "$3")
@@ -116,12 +122,6 @@ if ! system_node_is_usable; then
     node_bin="$stage_dir/$node_name/bin/node"
     npm_cli="$stage_dir/$npm_dir/bin/npm-cli.js"
     [[ -x "$node_bin" && -f "$npm_cli" ]] || die 'Node.js archive did not contain Node and npm'
-fi
-
-if [[ "$version" == latest ]]; then
-    download "https://api.github.com/repos/$repo/releases/latest" "$stage_dir/release.json"
-    version=$("$node_bin" -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).tag_name' "$stage_dir/release.json")
-    valid_tag "$version" || die 'GitHub returned an invalid release tag'
 fi
 
 release="https://github.com/$repo/releases/download/$version"

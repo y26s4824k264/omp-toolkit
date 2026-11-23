@@ -124,8 +124,8 @@ async function artifact(options, temp) {
   }
   let version = options.version;
   if (version === "latest") {
-    const found = await request("https://api.github.com/repos/" + repo + "/releases/latest", 30_000);
-    version = (await found.json()).tag_name;
+    const found = await request("https://github.com/" + repo + "/releases/latest/download/VERSION", 30_000);
+    version = (await found.text()).replace(/\r?\n$/, "");
     if (!versionPattern.test(version)) throw new Error("Invalid GitHub release tag");
   }
   const name = packageName + "-" + process.platform + "-" + process.arch + (windows ? ".zip" : ".tar.gz");

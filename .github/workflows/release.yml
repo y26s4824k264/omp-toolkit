@@ -142,12 +142,13 @@ jobs:
             test -s "release-assets/omp-toolkit-win32-$arch.zip"
           done
           cp install.sh install.ps1 scripts/install-release.mjs release-assets/
-          (cd release-assets && sha256sum -- install-release.mjs install.ps1 install.sh omp-toolkit-* > SHA256SUMS)
+          printf '%s\n' "$RELEASE_VERSION" > release-assets/VERSION
+          (cd release-assets && sha256sum -- VERSION install-release.mjs install.ps1 install.sh omp-toolkit-* > SHA256SUMS)
           tag_ref=$(git ls-remote origin "refs/tags/$RELEASE_VERSION")
           if [ -n "$tag_ref" ]; then
             echo "Release tag $RELEASE_VERSION already exists" >&2
             exit 1
           fi
-          gh release create "$RELEASE_VERSION" --target "$GITHUB_SHA" \
+          gh release create "$RELEASE_VERSION" --target "$GITHUB_SHA" --latest \
             --title "OMP Toolkit $RELEASE_VERSION" \
             --notes-file .github/release-notes.md release-assets/*

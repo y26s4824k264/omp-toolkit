@@ -2,7 +2,11 @@
 
 Prebuilt packages for macOS, Linux and Windows are available in Assets. The setup scripts verify package checksums and create local MCP configuration for WorkBuddy, Codex, Claude Code, Claude Desktop and other stdio clients.
 
-Assets 提供 macOS、Linux 和 Windows 安装包。安装脚本校验包的哈希，并为 WorkBuddy、Codex、Claude Code、Claude Desktop 等支持 stdio 的客户端生成本地配置。
+Assets 提供 macOS、Linux 和 Windows 的 x64、ARM64 安装包。安装脚本校验包的哈希，并为 WorkBuddy、Codex、Claude Code、Claude Desktop 等支持 stdio 的客户端生成本地配置。
+
+The one-command installers resolve the current stable version from the `VERSION` release asset. You can also pass an explicit version tag.
+
+一键安装脚本通过发行页的 `VERSION` 文件获取当前稳定版，也可以显式指定版本。
 
 Language servers, debug adapters, and offline tokenizers run independently of the Oh My Pi application. AST and Hashline previews produce unified patches in process. Use ordinary `git apply --check` and `git apply` for those patches.
 

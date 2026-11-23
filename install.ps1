@@ -36,7 +36,7 @@ if ($WithLspServers -and $WithoutLspServers) {
 
 $repo = 'y26s4824k264/omp-toolkit'
 $nodeVersion = 'v24.22.3'
-$releaseTagPattern = '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+$releaseTagPattern = '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\z'
 if ($Version -cne 'latest' -and $Version -cnotmatch $releaseTagPattern) {
     throw 'Version must be latest or a release tag such as v0.2.0.'
 }
@@ -84,6 +84,13 @@ $node = Find-Node (-not $WithoutLspServers)
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('omp-toolkit-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($stage)
 try {
+    if ($Version -ceq 'latest') {
+        $latest = Join-Path $stage 'VERSION'
+        Save-Download "https://github.com/$repo/releases/latest/download/VERSION" $latest
+        $Version = [IO.File]::ReadAllText($latest) -creplace '\r?\n\z', ''
+        if ($Version -cnotmatch $releaseTagPattern) { throw 'GitHub returned an invalid release tag.' }
+    }
+
     $npmCli = $null
     if (-not $node) {
         $machine = $env:PROCESSOR_ARCHITEW6432
@@ -109,12 +116,6 @@ try {
         if (-not (Test-Path -LiteralPath $node -PathType Leaf) -or -not (Test-Path -LiteralPath $npmCli -PathType Leaf)) {
             throw 'Node.js archive did not contain Node and npm.'
         }
-    }
-
-    if ($Version -ceq 'latest') {
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -TimeoutSec 60
-        $Version = $release.tag_name
-        if ($Version -cnotmatch $releaseTagPattern) { throw 'GitHub returned an invalid release tag.' }
     }
 
     $releaseUrl = "https://github.com/$repo/releases/download/$Version"
