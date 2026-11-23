@@ -28,9 +28,11 @@ const instructions = [
   "- For short commands and basic lookups, call the native tools directly. Use `rg` for file and text search and `git` for repository state and diffs.",
   "- For a code question with several keywords and no known file, use `omp-refactor ranked-find \"keywords\"` to rank files and read the matching lines.",
   "- Prefer the `omp` MCP server for structural search and patch previews. Use `ast_find` for syntax matches, `ast_preview` for rewrite previews, and `hashline_read` / `hashline_preview` for exact-line previews. Inspect the saved full patch and run `git apply --check` before applying. Refresh the preview when source files change.",
+  "- For described edits, use `omp-magic prepare`, have your coding agent supply the line operations, then use `omp-magic preview`. Use `omp-refactor sloppy` for text anchors or syntax-aware block edits. Inspect the full Git patch and run `git apply --check` before applying it.",
   "- Run multi-step shell work in a task-specific persistent PTY through `omp-shell`. Use `omp-shell run-log -- COMMAND ARGS...` to retain the original log and exit code for long commands. Use `log_minimize` for logs already on disk.",
   "- Use `omp-lsp check` for available language-server diagnostics. Treat missing servers, timeouts, and incomplete reports as unverified. Use `service_ready` for loopback or launch-log checks.",
-  "- When the user asks to retain a reusable project lesson, use `omp-refactor learn save`. Use `omp-refactor learn skill preview` to render a portable skill draft before writing it locally.",
+  "- When the user asks to retain a project lesson, use `omp-refactor learn save`. Use `omp-refactor learn list` to retrieve lessons. Preview a portable draft with `omp-refactor learn skill preview`, then use `omp-refactor learn skill create` or `omp-refactor learn skill update` when asked to save it.",
+  "- For recorded request usage in a Codex rollout log, use `omp-context-stats --turn 1 ROLLOUT.jsonl`. For an offline estimate of a source file, use `token_count` or `omp-refactor token-count`.",
   "",
 ].join("\n");
 

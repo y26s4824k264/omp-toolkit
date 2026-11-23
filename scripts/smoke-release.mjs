@@ -149,6 +149,11 @@ try {
     const config = JSON.parse(readFileSync(join(prefix, 'mcp-config.json'), 'utf8')).mcpServers.omp;
     const vscode = JSON.parse(readFileSync(join(prefix, 'vscode-mcp.json'), 'utf8')).servers.omp;
     assert.deepEqual(vscode, { ...config, type: 'stdio' });
+    const agentInstructions = readFileSync(join(prefix, 'AGENT-INSTRUCTIONS.md'), 'utf8');
+    assert.match(agentInstructions, /omp-magic prepare/);
+    assert.match(agentInstructions, /omp-refactor sloppy/);
+    assert.match(agentInstructions, /omp-refactor learn skill update/);
+    assert.match(agentInstructions, /omp-context-stats --turn 1/);
     await smokeMcp(config);
 
     const refactor = join(prefix, 'bin', 'omp-refactor' + suffix);

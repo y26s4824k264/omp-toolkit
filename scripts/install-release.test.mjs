@@ -195,6 +195,16 @@ test("adds and updates only the managed instructions of matching clients", { ski
     assert.equal(file.match(/<!-- omp-toolkit:start -->/g).length, 1);
     assert.match(file, /<!-- omp-toolkit:end -->\r\n$/);
   }
+  const portable = await readFile(join(prefix, "AGENT-INSTRUCTIONS.md"), "utf8");
+  for (const file of [firstCodex, firstClaude, portable]) {
+    for (const command of [
+      "omp-magic prepare", "omp-magic preview", "omp-refactor sloppy", "omp-refactor learn save",
+      "omp-refactor learn list", "omp-refactor learn skill preview", "omp-refactor learn skill create",
+      "omp-refactor learn skill update", "omp-context-stats --turn 1",
+    ]) {
+      assert.ok(file.includes(command), `Agent instructions are missing ${command}`);
+    }
+  }
   assert.equal(await readFile(agents, "utf8"), defaultRule);
   const retry = install([], opts);
   assert.equal(retry.status, 0, retry.stderr);
