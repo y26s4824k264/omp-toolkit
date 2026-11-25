@@ -3,7 +3,7 @@
 
 use std::{
     collections::BTreeSet,
-    fs::{self, File, Metadata},
+    fs::{self, File},
     io::{self, Read, Write},
     path::{Path, PathBuf},
     time::SystemTime,
@@ -14,7 +14,8 @@ use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
-const LEARNING_ROOT: [&str; 2] = [".omp-toolkit", "learning"];
+use crate::project_state::{checked_metadata, directory};
+
 const MAX_LESSON_CHARS: usize = 2_000;
 const MAX_CONTEXT_CHARS: usize = 400;
 const MAX_LESSON_BYTES: usize = 16_384;
@@ -252,54 +253,7 @@ fn save_skill(root: &Path, name: &str, skill: &str, update: bool) -> Result<Path
 }
 
 fn learning_directory(root: &Path, components: &[&str], create: bool) -> Result<Option<PathBuf>> {
-    let mut dir = root.to_owned();
-    for component in LEARNING_ROOT.into_iter().chain(components.iter().copied()) {
-        dir.push(component);
-        let mut metadata = checked_metadata(&dir)?;
-        if create && metadata.is_none() {
-            match fs::create_dir(&dir) {
-                Ok(()) => {}
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(err) => return Err(err).with_context(|| format!("create {}", dir.display())),
-            }
-            metadata = checked_metadata(&dir)?;
-        }
-        let Some(metadata) = metadata else {
-            return Ok(None);
-        };
-        ensure!(
-            metadata.is_dir(),
-            "expected a directory at {}",
-            dir.display()
-        );
-    }
-    Ok(Some(dir))
-}
-
-fn checked_metadata(path: &Path) -> Result<Option<Metadata>> {
-    let metadata = match path.symlink_metadata() {
-        Ok(metadata) => metadata,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("inspect {}", path.display())),
-    };
-    ensure!(
-        !is_redirect(&metadata),
-        "symbolic links are excluded: {}",
-        path.display()
-    );
-    Ok(Some(metadata))
-}
-
-#[cfg(windows)]
-fn is_redirect(metadata: &Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_redirect(metadata: &Metadata) -> bool {
-    metadata.is_symlink()
+    directory(root, "learning", components, create)
 }
 
 fn read_regular_text(path: &Path, limit: usize) -> Result<String> {

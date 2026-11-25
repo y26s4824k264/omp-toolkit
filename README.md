@@ -105,6 +105,19 @@ omp-refactor --root . learn skill create patch-review --description 'Review a Gi
 omp-refactor --root . learn skill update patch-review --description 'Review a Git patch' --body-file patch-review.md
 ```
 
+## Track a long-running goal
+
+The current source build includes `omp-refactor goal`. It stores a goal ID, its objective and acceptance criteria, and a separate current milestone in `.omp-toolkit/goals/`. Use the same project root and ID to resume it. Hosts like Codex can keep their native goal active while the project record tracks milestone and evidence details. The structure follows Oh My Pi's separate goal and todo state. [Oh My Pi goal continuation](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-continuation.md) · [Todo state](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-todo-context.md)
+
+```sh
+omp-refactor --root . goal init release --objective 'Publish and verify the update' --criterion 'Platform tests pass' --criterion 'Public installation works'
+omp-refactor --root . goal focus release 'Run the platform tests'
+omp-refactor --root . goal record release 1 'CI run 123 passed the required platform jobs'
+omp-refactor --root . goal show release
+```
+
+`goal list` shows saved IDs. `goal clear-evidence release 1` withdraws stale evidence. `ready_for_review` indicates every criterion has a recorded reference. Confirm that those references still prove the objective before closing the host goal. The v0.3.0 bundles predate this command.
+
 ## Other commands
 
 | Workflow | Entry point |

@@ -190,6 +190,16 @@ try {
     learn('skill', 'create', ...skill);
     assert.equal(readFileSync(join(project, '.omp-toolkit', 'learning', 'skills', skill[0], 'SKILL.md'), 'utf8'), preview);
 
+    const goal = (...args) => JSON.parse(run(refactor, ['--root', project, 'goal', ...args]));
+    goal('init', 'delivery', '--objective', 'Roll out the change', '--criterion', 'Required tests pass', '--criterion', 'Release is downloadable');
+    goal('focus', 'delivery', 'Run the focused tests');
+    assert.equal(goal('record', 'delivery', '1', 'All required test suites passed').ready_for_review, false);
+    const restored = goal('show', 'delivery');
+    assert.equal(restored.objective, 'Roll out the change');
+    assert.equal(restored.current_milestone, 'Run the focused tests');
+    assert.equal(goal('record', 'delivery', '2', 'Downloaded the release artifact').ready_for_review, true);
+    assert.equal(goal('clear-evidence', 'delivery', '1').ready_for_review, false);
+
     const catalog = JSON.parse(launchInstalled('omp-lsp', ['--json', 'catalog']));
     assert.equal(catalog.servers.length, 55);
     writeFileSync(join(project, 'invalid.json'), '{"missing":}\n');

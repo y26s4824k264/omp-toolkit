@@ -32,6 +32,7 @@ const instructions = [
   "- Run multi-step shell work in a task-specific persistent PTY through `omp-shell`. Use `omp-shell run-log -- COMMAND ARGS...` to retain the original log and exit code for long commands. Use `log_minimize` for logs already on disk.",
   "- Use `omp-lsp check` for available language-server diagnostics. Treat missing servers, timeouts, and incomplete reports as unverified. Use `service_ready` for loopback or launch-log checks.",
   "- When the user asks to retain a project lesson, use `omp-refactor learn save`. Use `omp-refactor learn list` to retrieve lessons. Preview a portable draft with `omp-refactor learn skill preview`, then use `omp-refactor learn skill create` or `omp-refactor learn skill update` when asked to save it.",
+  "- For an active long-running goal, recover the user's objective and acceptance criteria before updating the current plan. Keep the current milestone separate. If the user wants project-local tracking, use `omp-refactor goal init`, `goal focus`, and `goal show` with the same project root and goal ID. Record evidence after checking a criterion. Review every criterion against current evidence before completing the host goal.",
   "- For recorded request usage in a Codex rollout log, use `omp-context-stats --turn 1 ROLLOUT.jsonl`. For an offline estimate of a source file, use `token_count` or `omp-refactor token-count`.",
   "",
 ].join("\n");

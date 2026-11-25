@@ -12,9 +12,11 @@ use clap::{Parser, Subcommand};
 
 mod discovery;
 mod git_patch;
+mod goal;
 mod hashline;
 mod learn;
 mod magic_native;
+mod project_state;
 mod ranked_find;
 mod sloppy;
 mod structural;
@@ -96,6 +98,11 @@ enum EditCommand {
         #[command(subcommand)]
         command: learn::Command,
     },
+    /// Track a project goal, its current milestone, and acceptance evidence.
+    Goal {
+        #[command(subcommand)]
+        command: goal::Command,
+    },
     #[command(hide = true)]
     EditSnapshot {
         #[arg(required = true)]
@@ -147,6 +154,7 @@ fn main() -> Result<()> {
             return ranked_find::ranked_find(&root, &query, limit);
         }
         EditCommand::Learn { command } => return learn::run(&root, command),
+        EditCommand::Goal { command } => return goal::run(&root, command),
         EditCommand::EditSnapshot { files } => return magic_native::snapshot(&root, &files),
         EditCommand::EditSnapshotPreview => magic_native::preview(&root, io::stdin().lock())?,
         EditCommand::TokenCount { file } => {

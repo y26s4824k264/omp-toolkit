@@ -105,6 +105,19 @@ omp-refactor --root . learn skill create patch-review --description 'Review a Gi
 omp-refactor --root . learn skill update patch-review --description 'Review a Git patch' --body-file patch-review.md
 ```
 
+## 跟踪长期目标
+
+当前源码版提供 `omp-refactor goal`。它把目标 ID、总目标、验收条件和当前里程碑存到项目的 `.omp-toolkit/goals/`。续做时用同一个项目根目录和 ID。用 Codex 等智能体的原生目标功能维持长期任务，用这份项目记录跟踪里程碑和验收证据。这个结构借鉴了 Oh My Pi 分开保存目标和待办的做法。 [Oh My Pi 目标续做](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-continuation.md) · [待办状态](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-todo-context.md)
+
+```sh
+omp-refactor --root . goal init release --objective 'Publish and verify the update' --criterion 'Platform tests pass' --criterion 'Public installation works'
+omp-refactor --root . goal focus release 'Run the platform tests'
+omp-refactor --root . goal record release 1 'CI run 123 passed the required platform jobs'
+omp-refactor --root . goal show release
+```
+
+`goal list` 列出已有 ID。`goal clear-evidence release 1` 可撤回失效证据。`ready_for_review` 表示每项条件都已登记证据，关闭原生目标前还需核对这些证据是否仍能证明完成。这个命令需要当前源码版，v0.3.0 发行包早于这次改动。
+
 ## 其他命令
 
 | 用途 | 命令 |
