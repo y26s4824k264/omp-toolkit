@@ -150,6 +150,8 @@ Office responses default to 8,000 bytes of inner JSON. Use `next_offset` as `off
 
 Use `media_read` when several ranges or crops are already known. Pass an `items` array with up to six selections. Each item takes the same arguments as the single reader plus `type: "office"` or `type: "image"`. The result identifies each item in input order and reports errors per item. A batch can return up to two image previews and 24,000 bytes of reader text. Reuse the results for follow-ups about those selections. The running MCP server keeps up to four legacy conversions and checks the source bytes on every read.
 
+Codex sessions that expose Code Mode can call a known OMP reader inside one `exec` call and avoid a separate model tool-search request. The installer instructions include the Office reader arguments for this path. To try experimental Code Mode from the CLI, save the [media profile](codex/omp-media.config.toml) as `~/.codex/omp-media.config.toml` and launch `codex --profile omp-media`. The profile enables Code Mode alongside ordinary tools and uses the existing `omp` MCP registration. [Codex profiles](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles)
+
 ## Upgrade from earlier releases
 
 Use `omp-context-stats` in scripts that previously called `codex-context-stats`. Set hand-written MCP configurations to `omp-toolkit-mcp` or `omp-toolkit-mcp.exe` on Windows. The old `omp-codex-mcp` alias is absent from new installs. The generated configuration includes the correct executable path and arguments.

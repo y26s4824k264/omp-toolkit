@@ -150,6 +150,8 @@ Office 默认每次返回最多 8,000 字节的内部 JSON。后续使用返回�
 
 已知多个范围或裁剪区域时，用 `media_read` 一次读取。传入最多六项的 `items` 数组，每项沿用单项读取的参数，并带上 `type: "office"` 或 `type: "image"`。结果按输入顺序编号，逐项报告错误。每批最多返回两张预览和 24,000 字节的读取文本。后续提问可复用同一批结果。运行中的 MCP 服务最多缓存四份旧版 Office 转换，每次读取都核对源文件内容。
 
+已有 Code Mode 的 Codex 会话可以在一个 `exec` 调用里直接使用已知的 OMP 读取工具，省去一次独立的模型工具搜索请求。安装指引提供了这条路径的 Office 读取参数。要在 CLI 里试用实验性 Code Mode，把[读取配置档](codex/omp-media.config.toml)保存为 `~/.codex/omp-media.config.toml`，用 `codex --profile omp-media` 启动。配置档允许 Code Mode 和常规工具并用，并沿用已有的 `omp` MCP 注册。 [Codex 配置档](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles)
+
 ## 从旧版升级
 
 旧脚本中的 `codex-context-stats` 要替换为 `omp-context-stats`。手写 MCP 配置应指向 `omp-toolkit-mcp`，Windows 上是 `omp-toolkit-mcp.exe`。新版安装包已移除旧的 `omp-codex-mcp` 别名。生成的配置可用来核对启动路径和参数。
