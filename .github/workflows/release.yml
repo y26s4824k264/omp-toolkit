@@ -24,7 +24,7 @@ jobs:
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    timeout-minutes: ${{ matrix.timeout_minutes || 35 }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +37,7 @@ jobs:
             platform: darwin
             arch: x64
             target: x86_64-apple-darwin
+            timeout_minutes: 50
           - runner: ubuntu-22.04
             platform: linux
             arch: x64
