@@ -190,14 +190,22 @@ async function smokeRunLogCancellation(shell, signal, code) {
         assert.ok(invocation.kill(signal));
         const result = await Promise.race([closed, delay(10_000, null, { ref: false })]);
         assert.deepEqual(result, [code, null]);
-        const tree = spawnSync(shell, ['process-tree', String(workerPid), '--depth', '0', '--json'],
-            { encoding: 'utf8', timeout: 5_000 });
-        assert.equal(tree.error, undefined);
-        if (tree.status === 0) {
-            assert.equal(JSON.parse(tree.stdout).processes[0].status, 'exited');
-        } else {
-            assert.equal(tree.status, 1, tree.stderr);
-            assert.match(tree.stderr, /cannot inspect PID/i);
+        // The detached worker can still be exiting after run-log reaps its direct child.
+        const exitDeadline = Date.now() + 5_000;
+        while (true) {
+            const tree = spawnSync(shell, ['process-tree', String(workerPid), '--depth', '0', '--json'],
+                { encoding: 'utf8', timeout: 5_000 });
+            assert.equal(tree.error, undefined);
+            if (tree.status !== 0) {
+                assert.equal(tree.status, 1, tree.stderr);
+                assert.match(tree.stderr, /cannot inspect PID/i);
+                break;
+            }
+            const status = JSON.parse(tree.stdout).processes[0].status;
+            if (status === 'exited') break;
+            assert.equal(status, 'running');
+            assert.ok(Date.now() < exitDeadline, `detached worker ${workerPid} did not exit after ${signal}`);
+            await delay(20);
         }
         workerPid = undefined;
         assert.match(readFileSync(log, 'utf8'), /detached worker ready/);
