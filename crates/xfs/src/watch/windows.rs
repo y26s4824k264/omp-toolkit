@@ -43,7 +43,10 @@ use windows_sys::Win32::{
 	},
 };
 
-use crate::watch::{Flags, MISSING_ROOT_RECHECK, Root, Timing, batch::Emitter, missing_root};
+use crate::{
+	fs::{FileId, identify_directory_handle},
+	watch::{Flags, MISSING_ROOT_RECHECK, Root, Timing, batch::Emitter, missing_root},
+};
 
 /// Read buffer for file changes on local volumes (what git's fsmonitor
 /// uses).
@@ -80,7 +83,8 @@ impl Watch {
 				.spawn(move || {
 					// Opened here: the reads are cancelled by the thread that
 					// issued them.
-					Reader { target, streams: None, stop, timing, emitter }.run(&ready_tx);
+					Reader { target, streams: None, directory_id: None, stop, timing, emitter }
+						.run(&ready_tx);
 				})?;
 			// The first reads register the watch with the kernel; changes from
 			// then on are queued even while no read is pending.
@@ -199,24 +203,7 @@ enum Read {
 
 impl Stream {
 	fn open(dir: &Path, filter: u32, len: usize, directories: bool) -> io::Result<Self> {
-		let wide: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
-		// SAFETY: `wide` is NUL-terminated and outlives the call.
-		let raw = unsafe {
-			CreateFileW(
-				wide.as_ptr(),
-				FILE_LIST_DIRECTORY,
-				FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-				ptr::null(),
-				OPEN_EXISTING,
-				FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
-				ptr::null_mut(),
-			)
-		};
-		if raw == INVALID_HANDLE_VALUE {
-			return Err(last_error(&format!("open {}", dir.display())));
-		}
-		// SAFETY: `raw` is a valid handle this function exclusively owns.
-		let directory = unsafe { OwnedHandle::from_raw_handle(raw) };
+		let directory = open_directory(dir)?;
 		let len = len.max(4096);
 		Ok(Self {
 			directory,
@@ -335,6 +322,7 @@ struct Reader {
 	/// The file stream and the directory stream; `None` while the root is
 	/// gone.
 	streams: Option<[Stream; 2]>,
+	directory_id: Option<FileId>,
 	stop:    OwnedHandle,
 	timing:  Timing,
 	emitter: Arc<Mutex<Emitter>>,
@@ -357,8 +345,7 @@ impl Reader {
 				let Err(error) = self.read() else {
 					return;
 				};
-				let gone = !self.target.dir.exists();
-				if !(gone && self.timing.await_missing) {
+				if !(self.timing.await_missing && self.directory_missing_or_replaced(&error)) {
 					// Cancels the reads and closes the handles.
 					self.streams = None;
 					self.emit(|emitter| emitter.fail(error));
@@ -389,10 +376,29 @@ impl Reader {
 			Stream::open(dir, FILE_FILTER, files, false)?,
 			Stream::open(dir, DIR_FILTER, NETWORK_BUFFER_BYTES, true)?,
 		]);
-		for stream in streams {
+		for stream in streams.iter_mut() {
 			stream.arm(self.target.recursive)?;
 		}
+		self.directory_id = if self.timing.await_missing {
+			identify_directory_handle(&streams[0].directory).ok()
+		} else {
+			None
+		};
 		Ok(())
+	}
+
+	fn directory_missing_or_replaced(&self, error: &io::Error) -> bool {
+		if !self.target.dir.exists() {
+			return true;
+		}
+		// An overlapped read can fail with access denied on the deleted handle
+		// after another process has recreated the directory at the same path.
+		error.kind() == io::ErrorKind::PermissionDenied
+			&& self.directory_id.is_some_and(|previous| {
+				open_directory(&self.target.dir)
+					.and_then(|current| identify_directory_handle(&current))
+					.is_ok_and(|current| current != previous)
+			})
 	}
 
 	fn emit(&self, deliver: impl FnOnce(&mut Emitter)) {
@@ -549,6 +555,27 @@ fn parse(buffer: &[u64], bytes: usize, directories: bool, target: &Target, emitt
 		}
 		offset += record.NextEntryOffset as usize;
 	}
+}
+
+fn open_directory(dir: &Path) -> io::Result<OwnedHandle> {
+	let wide: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+	// SAFETY: `wide` is NUL-terminated and outlives the call.
+	let raw = unsafe {
+		CreateFileW(
+			wide.as_ptr(),
+			FILE_LIST_DIRECTORY,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			ptr::null(),
+			OPEN_EXISTING,
+			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+			ptr::null_mut(),
+		)
+	};
+	if raw == INVALID_HANDLE_VALUE {
+		return Err(last_error(&format!("open {}", dir.display())));
+	}
+	// SAFETY: `raw` is a valid handle this function exclusively owns.
+	Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
 }
 
 /// A manual-reset, initially unsignalled event.

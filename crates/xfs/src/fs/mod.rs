@@ -80,6 +80,11 @@ pub struct FileId {
 	pub native: bool,
 }
 
+#[cfg(windows)]
+pub(crate) fn identify_directory_handle(handle: &std::os::windows::io::OwnedHandle) -> io::Result<FileId> {
+	native::identify_dir(handle)
+}
+
 /// One version of a file or directory.
 ///
 /// Adding, removing, or renaming a directory's entries moves its mtime and
