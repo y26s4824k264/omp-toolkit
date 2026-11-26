@@ -98,17 +98,10 @@ pub(crate) fn extension(path: &Path) -> String {
 }
 
 pub(crate) fn legacy_conversion(
-    path: &Path,
-    source: &str,
+    input: &Path,
     target: &str,
     output: &Path,
 ) -> Result<(tokio::process::Command, PathBuf)> {
-    ensure!(
-        path.metadata()?.len() <= MAX_FILE_BYTES,
-        "Office file exceeds the 64 MiB input limit"
-    );
-    let input = output.join(format!("source.{source}"));
-    fs::copy(path, &input).context("copy legacy Office file to temporary directory")?;
     let profile = output.join("profile");
     fs::create_dir_all(profile.join("user"))?;
     fs::write(

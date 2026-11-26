@@ -32,6 +32,12 @@ pub(crate) struct Selection {
     crop: Option<Crop>,
 }
 
+impl Selection {
+    pub(crate) fn wants_preview(&self) -> bool {
+        self.max_edge.is_some() || self.crop.is_some()
+    }
+}
+
 #[derive(Clone, Copy, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Crop {
@@ -79,7 +85,7 @@ pub(crate) fn read(path: &Path, selection: Selection) -> Result<Vec<ContentBlock
         std::mem::swap(&mut width, &mut height);
     }
     let mut info = json!({"width": width, "height": height, "bytes": size, "mime_type": format.to_mime_type()});
-    if selection.max_edge.is_none() && selection.crop.is_none() {
+    if !selection.wants_preview() {
         return Ok(vec![ContentBlock::text(info.to_string())]);
     }
 

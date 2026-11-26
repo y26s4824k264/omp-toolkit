@@ -89,7 +89,7 @@ async function smokeMcp(config) {
         const tools = (await request('tools/list')).tools.map(tool => tool.name).sort();
         assert.deepEqual(tools, [
             'ast_find', 'ast_preview', 'hashline_preview', 'hashline_read', 'image_read',
-            'log_minimize', 'office_read', 'profile_summary', 'read_summary', 'service_ready',
+            'log_minimize', 'media_read', 'office_read', 'profile_summary', 'read_summary', 'service_ready',
             'shell_parse', 'token_count',
         ]);
 
@@ -129,6 +129,22 @@ async function smokeMcp(config) {
         assert.equal(preview.isError, false);
         assert.equal(preview.content[1].type, 'image');
         assert.equal(preview.content[1].mimeType, 'image/png');
+        const batch = await request('tools/call', {
+            name: 'media_read',
+            arguments: { items: [
+                { type: 'office', root, file: 'missing.docx' },
+                { type: 'office', root },
+                { type: 'image', root, file: 'fixture.png', max_edge: 32 },
+            ] },
+        });
+        assert.equal(batch.isError, false);
+        assert.deepEqual(JSON.parse(batch.content[0].text), { item: 1 });
+        assert.match(JSON.parse(batch.content[1].text).error, /resolve project file/);
+        assert.deepEqual(JSON.parse(batch.content[2].text), { item: 2 });
+        assert.match(JSON.parse(batch.content[3].text).error, /invalid media selection/);
+        assert.deepEqual(JSON.parse(batch.content[4].text), { item: 3 });
+        assert.equal(JSON.parse(batch.content[5].text).preview.width, 1);
+        assert.equal(batch.content[6].type, 'image');
         assert.equal(readFileSync(join(project, file), 'utf8'), source);
         server.stdin.end();
         assert.deepEqual(await closed, [0, null]);

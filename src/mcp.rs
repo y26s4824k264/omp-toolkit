@@ -3,24 +3,29 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     process::{ExitStatus, Stdio},
+    sync::Arc,
     time::Duration,
 };
 
 use anyhow::{Context, Result, ensure};
 use clap::Parser;
+use futures::future::join_all;
 use rmcp::{
-    ServerHandler, ServiceExt,
+    RoleServer, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig},
     schemars::{self, JsonSchema},
+    service::RequestContext,
     tool, tool_handler, tool_router,
     transport::stdio,
 };
 use serde::Deserialize;
+use serde_json::{Value, json};
 use tempfile::NamedTempFile;
 use tokio::{process::Command, time::timeout};
 
 mod image_read;
+mod legacy_office;
 mod log_preview;
 mod office_read;
 mod service_ready;
@@ -30,6 +35,7 @@ const INLINE_BYTES: usize = 12_000;
 // The input limit of OMP's command-aware minimizer.
 const MINIMIZER_INPUT_BYTES: u64 = 4 * 1024 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(50);
+const MEDIA_BATCH_TEXT_BYTES: usize = 24_000;
 
 #[derive(Parser)]
 #[command(
@@ -56,6 +62,7 @@ struct OmpTools {
     bin_dir: PathBuf,
     node: Option<PathBuf>,
     profile_helper: Option<PathBuf>,
+    legacy_office: Arc<legacy_office::Cache>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -130,6 +137,22 @@ struct CountFile {
     root: PathBuf,
     /// File path relative to root.
     file: PathBuf,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ReadMedia {
+    /// Independent Office ranges or image views to read in one call, in result order.
+    /// Up to six selections including two image previews.
+    #[schemars(with = "Vec<MediaSelection>")]
+    items: Vec<Value>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum MediaSelection {
+    Office(office_read::Selection),
+    Image(image_read::Selection),
 }
 
 #[tool_router]
@@ -244,43 +267,13 @@ impl OmpTools {
     async fn office_read(
         &self,
         Parameters(input): Parameters<office_read::Selection>,
+        context: RequestContext<RoleServer>,
     ) -> CallToolResult {
-        let result = async {
-            let mut path = project_file(&input.root, &input.file)?;
-            let source = office_read::extension(&path);
-            let target = match source.as_str() {
-                "ppt" => Some("pptx"),
-                "xls" => Some("xlsx"),
-                _ => None,
-            };
-            let converted = if let Some(target) = target {
-                let temp =
-                    tempfile::tempdir().context("create legacy Office conversion directory")?;
-                let (command, result) =
-                    office_read::legacy_conversion(&path, &source, target, temp.path())?;
-                let output = checked(
-                    capture(command, ".txt")
-                        .await
-                        .context("convert legacy Office file with LibreOffice (soffice)")?,
-                )?;
-                ensure!(
-                    result.is_file(),
-                    "LibreOffice did not export {target}: {}",
-                    preview_text(&output.stderr)?
-                );
-                path = result;
-                Some(temp)
-            } else {
-                None
-            };
-            tokio::task::spawn_blocking(move || {
-                let _keep_conversion = converted;
-                office_read::read(&path, input, &source)
-            })
-            .await
-            .context("join Office reader")?
-        }
-        .await;
+        let result = tokio::select! {
+            biased;
+            () = context.ct.cancelled() => Err(anyhow::anyhow!("Office read cancelled")),
+            result = self.read_office(input) => result,
+        };
         tool_result(result)
     }
 
@@ -292,17 +285,24 @@ impl OmpTools {
         &self,
         Parameters(input): Parameters<image_read::Selection>,
     ) -> CallToolResult {
-        let result = async {
-            let path = project_file(&input.root, &input.file)?;
-            tokio::task::spawn_blocking(move || image_read::read(&path, input))
-                .await
-                .context("join image reader")?
-        }
-        .await;
-        match result {
-            Ok(content) => CallToolResult::success(content),
-            Err(error) => tool_result(Err(error)),
-        }
+        content_result(Self::read_image(input).await)
+    }
+
+    #[tool(
+        description = "Batch known Office ranges and image regions in a single call. Use once for several selections and reuse the results for follow-up questions.",
+        annotations(read_only_hint = true)
+    )]
+    async fn media_read(
+        &self,
+        Parameters(input): Parameters<ReadMedia>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        let result = tokio::select! {
+            biased;
+            () = context.ct.cancelled() => Err(anyhow::anyhow!("media read cancelled")),
+            result = self.read_media(input) => result,
+        };
+        content_result(result)
     }
 
     #[tool(
@@ -418,6 +418,82 @@ impl OmpTools {
 }
 
 impl OmpTools {
+    async fn read_office(&self, input: office_read::Selection) -> Result<String> {
+        let path = project_file(&input.root, &input.file)?;
+        let source = office_read::extension(&path);
+        let converted = match legacy_office::Format::from_extension(&source) {
+            Some(format) => Some(self.legacy_office.get(&path, format).await?),
+            None => None,
+        };
+        tokio::task::spawn_blocking(move || {
+            let selected = converted.as_ref().map_or(&path, |file| &file.path);
+            office_read::read(selected, input, &source)
+        })
+        .await
+        .context("join Office reader")?
+    }
+
+    async fn read_image(input: image_read::Selection) -> Result<Vec<ContentBlock>> {
+        let path = project_file(&input.root, &input.file)?;
+        tokio::task::spawn_blocking(move || image_read::read(&path, input))
+            .await
+            .context("join image reader")?
+    }
+
+    async fn read_media(&self, input: ReadMedia) -> Result<Vec<ContentBlock>> {
+        ensure!(
+            (1..=6).contains(&input.items.len()),
+            "provide 1 to 6 media selections"
+        );
+        let items: Vec<_> = input
+            .items
+            .into_iter()
+            .map(|item| {
+                serde_json::from_value::<MediaSelection>(item).context("invalid media selection")
+            })
+            .collect();
+        let previews = items.iter().filter(|item| {
+            matches!(item, Ok(MediaSelection::Image(selection)) if selection.wants_preview())
+        }).count();
+        ensure!(previews <= 2, "batch at most two image previews");
+        let reads = items.into_iter().map(|item| async {
+            match item? {
+                MediaSelection::Office(input) => self
+                    .read_office(input)
+                    .await
+                    .map(|text| vec![ContentBlock::text(text)]),
+                MediaSelection::Image(input) => Self::read_image(input).await,
+            }
+        });
+        let mut content = Vec::new();
+        let mut remaining = MEDIA_BATCH_TEXT_BYTES;
+        for (index, read) in join_all(reads).await.into_iter().enumerate() {
+            let item = index + 1;
+            content.push(ContentBlock::text(json!({"item": item}).to_string()));
+            match read {
+                Ok(blocks) => {
+                    let bytes = blocks
+                        .iter()
+                        .filter_map(ContentBlock::as_text)
+                        .map(|text| text.text.len())
+                        .sum();
+                    if let Some(budget) = remaining.checked_sub(bytes) {
+                        remaining = budget;
+                        content.extend(blocks);
+                    } else {
+                        content.push(ContentBlock::text(json!({
+                            "error": "batch text budget exceeded; read this item with a smaller range or alone",
+                        }).to_string()));
+                    }
+                }
+                Err(error) => content.push(ContentBlock::text(
+                    json!({"error": format!("{error:#}")}).to_string(),
+                )),
+            }
+        }
+        Ok(content)
+    }
+
     fn tool_command(&self, name: &str) -> Command {
         let executable = format!("{name}{}", std::env::consts::EXE_SUFFIX);
         Command::new(self.bin_dir.join(executable))
@@ -441,7 +517,7 @@ impl ServerHandler for OmpTools {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("omp-toolkit-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Inspect saved preview patches and run git apply --check before applying. Use office_read for Office text and cell ranges, and image_read for image metadata or a region preview.",
+                "Inspect saved preview patches and run git apply --check before applying. Use office_read or image_read for one selection. Batch several known selections with media_read and reuse results for follow-ups.",
             )
     }
 }
@@ -563,6 +639,13 @@ fn tool_result(result: Result<String>) -> CallToolResult {
     }
 }
 
+fn content_result(result: Result<Vec<ContentBlock>>) -> CallToolResult {
+    match result {
+        Ok(content) => CallToolResult::success(content),
+        Err(error) => tool_result(Err(error)),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -582,6 +665,7 @@ async fn main() -> Result<()> {
         bin_dir: cli.bin_dir,
         node: cli.node,
         profile_helper: cli.profile_helper,
+        legacy_office: Arc::default(),
         tool_router: OmpTools::tool_router(),
     }
     .serve(stdio())

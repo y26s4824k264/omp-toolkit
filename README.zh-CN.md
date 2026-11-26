@@ -148,6 +148,8 @@ omp-refactor --root . goal show release
 
 Office 默认每次返回最多 8,000 字节的内部 JSON。后续使用返回的 `next_offset` 作为 `offset`，并沿用原范围和字节预算。长记录可按 `part` 拼接 `record_json`，到 `last: true` 再解析。旧版 XLS、PPT 需要 LibreOffice（`soffice`），转换在临时副本上执行。转换可能规范化公式语法、重新计算缓存值。检查版式、图表和嵌入图片时使用视觉渲染。
 
+已知多个范围或裁剪区域时，用 `media_read` 一次读取。传入最多六项的 `items` 数组，每项沿用单项读取的参数，并带上 `type: "office"` 或 `type: "image"`。结果按输入顺序编号，逐项报告错误。每批最多返回两张预览和 24,000 字节的读取文本。后续提问可复用同一批结果。运行中的 MCP 服务最多缓存四份旧版 Office 转换，每次读取都核对源文件内容。
+
 ## 从旧版升级
 
 旧脚本中的 `codex-context-stats` 要替换为 `omp-context-stats`。手写 MCP 配置应指向 `omp-toolkit-mcp`，Windows 上是 `omp-toolkit-mcp.exe`。新版安装包已移除旧的 `omp-codex-mcp` 别名。生成的配置可用来核对启动路径和参数。

@@ -148,6 +148,8 @@ Both tools accept an absolute `root` directory and a relative `file` inside it.
 
 Office responses default to 8,000 bytes of inner JSON. Use `next_offset` as `offset` with the same selection and budget. For a long record, concatenate its `record_json` fragments in `part` order through `last: true`, then parse the assembled JSON. Legacy XLS and PPT require LibreOffice (`soffice`) and use temporary copies. Legacy conversions can normalize formula syntax and recalculate cached values. Use visual rendering to verify layout, charts and embedded images.
 
+Use `media_read` when several ranges or crops are already known. Pass an `items` array with up to six selections. Each item takes the same arguments as the single reader plus `type: "office"` or `type: "image"`. The result identifies each item in input order and reports errors per item. A batch can return up to two image previews and 24,000 bytes of reader text. Reuse the results for follow-ups about those selections. The running MCP server keeps up to four legacy conversions and checks the source bytes on every read.
+
 ## Upgrade from earlier releases
 
 Use `omp-context-stats` in scripts that previously called `codex-context-stats`. Set hand-written MCP configurations to `omp-toolkit-mcp` or `omp-toolkit-mcp.exe` on Windows. The old `omp-codex-mcp` alias is absent from new installs. The generated configuration includes the correct executable path and arguments.
