@@ -1,3 +1,13 @@
+## Office and image reads / Office 与图片读取
+
+- `office_read` reads DOCX blocks, PowerPoint slides, and Excel ranges with cell addresses, formulas, and cached values. Legacy XLS and PPT use LibreOffice for conversion.
+- `image_read` returns metadata or a bounded preview. `media_read` batches known Office ranges and image crops for follow-up questions.
+- Codex sessions with Code Mode can read known Office ranges and image crops in one `exec` call. The installer includes the routing instructions. [Optional Codex CLI profile](https://github.com/y26s4824k264/omp-toolkit/blob/v0.4.0/codex/omp-media.config.toml)
+
+- `office_read` 按正文块、幻灯片或单元格范围读取 Office。Excel 保留单元格坐标、公式和缓存值。旧版 XLS 和 PPT 通过 LibreOffice 转换。
+- `image_read` 返回图片元数据或限定范围的预览。`media_read` 批量读取已知范围，供后续提问复用。
+- 提供 Code Mode 的 Codex 会话可用一次 `exec` 直读已知 Office 范围和图片裁剪区域。安装器附带调用指引。 [可选 Codex CLI 配置档](https://github.com/y26s4824k264/omp-toolkit/blob/v0.4.0/codex/omp-media.config.toml)
+
 ## Install / 安装
 
 Prebuilt packages for macOS, Linux and Windows are available in Assets. The setup scripts verify package checksums and create local MCP configuration for WorkBuddy, Codex, Claude Code, Claude Desktop and other stdio clients.

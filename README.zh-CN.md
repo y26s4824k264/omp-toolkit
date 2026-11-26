@@ -4,20 +4,20 @@
 
 在 WorkBuddy、Codex、Claude 或终端中使用 Oh My Pi 的源码检查、补丁预览、Shell、LSP 诊断和调试能力。工具在本机运行，无需另装 Oh My Pi 或登录模型账户。
 
-## 安装 v0.3.0
+## 安装 v0.4.0
 
-安装器按 SHA-256 校验二进制包。`PATH` 中有兼容的 Node.js 和 npm 时会复用，否则从上游下载并校验。默认安装常用语言服务器。检查和应用补丁、预览 LSP 重命名时需安装 Git。 [发布包和校验值](https://github.com/y26s4824k264/omp-toolkit/releases/tag/v0.3.0)
+安装器按 SHA-256 校验二进制包。`PATH` 中有兼容的 Node.js 和 npm 时会复用，否则从上游下载并校验。默认安装常用语言服务器。检查和应用补丁、预览 LSP 重命名时需安装 Git。 [发布包和校验值](https://github.com/y26s4824k264/omp-toolkit/releases/tag/v0.4.0)
 
 **macOS 和 Linux**
 
 ```sh
-curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.3.0/install.sh && bash install.sh --version v0.3.0
+curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.4.0/install.sh && bash install.sh --version v0.4.0
 ```
 
 **Windows PowerShell 5.1 或更新版本**
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.3.0/install.ps1 -OutFile install.ps1; if ($?) { & .\install.ps1 -Version v0.3.0 }
+Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.4.0/install.ps1 -OutFile install.ps1; if ($?) { & .\install.ps1 -Version v0.4.0 }
 ```
 
 默认目录为 `$HOME/.local/omp-toolkit` 和 `%LOCALAPPDATA%\OMP Toolkit`。用 `--prefix DIR` 或 `-Prefix DIR` 自定义目录，用 `--without-lsp-servers` 或 `-WithoutLspServers` 跳过常用语言服务器。按安装输出将 `bin` 加入 `PATH`，再运行 `omp-refactor --version` 和 `omp-toolkit-mcp --version`。
@@ -25,11 +25,11 @@ Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/r
 如果只安装命令和生成接入配置，运行下载后的脚本并指定 `none`。
 
 ```sh
-bash install.sh --version v0.3.0 --client none
+bash install.sh --version v0.4.0 --client none
 ```
 
 ```powershell
-& .\install.ps1 -Version v0.3.0 -Client none
+& .\install.ps1 -Version v0.4.0 -Client none
 ```
 
 | 系统 | 架构 | 要求 |
@@ -109,7 +109,7 @@ omp-refactor --root . learn skill update patch-review --description 'Review a Gi
 
 ## 跟踪长期目标
 
-当前源码版提供 `omp-refactor goal`。它把目标 ID、总目标、验收条件和当前里程碑存到项目的 `.omp-toolkit/goals/`。续做时用同一个项目根目录和 ID。用 Codex 等智能体的原生目标功能维持长期任务，用这份项目记录跟踪里程碑和验收证据。这个结构借鉴了 Oh My Pi 分开保存目标和待办的做法。 [Oh My Pi 目标续做](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-continuation.md) · [待办状态](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-todo-context.md)
+`omp-refactor goal` 把目标 ID、总目标、验收条件和当前里程碑存到项目的 `.omp-toolkit/goals/`。续做时用同一个项目根目录和 ID。用 Codex 等智能体的原生目标功能维持长期任务，用这份项目记录跟踪里程碑和验收证据。这个结构借鉴了 Oh My Pi 分开保存目标和待办的做法。 [Oh My Pi 目标续做](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-continuation.md) · [待办状态](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-todo-context.md)
 
 ```sh
 omp-refactor --root . goal init release --objective 'Publish and verify the update' --criterion 'Platform tests pass' --criterion 'Public installation works'
@@ -118,7 +118,7 @@ omp-refactor --root . goal record release 1 'CI run 123 passed the required plat
 omp-refactor --root . goal show release
 ```
 
-`goal list` 列出已有 ID。`goal clear-evidence release 1` 可撤回失效证据。`ready_for_review` 表示每项条件都已登记证据，关闭原生目标前还需核对这些证据是否仍能证明完成。这个命令需要当前源码版，v0.3.0 发行包早于这次改动。
+`goal list` 列出已有 ID。`goal clear-evidence release 1` 可撤回失效证据。`ready_for_review` 表示每项条件都已登记证据，关闭原生目标前还需核对这些证据是否仍能证明完成。
 
 ## 其他命令
 

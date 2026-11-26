@@ -4,20 +4,20 @@ English · [简体中文](README.zh-CN.md)
 
 Use Oh My Pi's code inspection, patch previews, shell tools, LSP diagnostics, and debugging from WorkBuddy, Codex, Claude, or your terminal. The toolkit runs locally and needs no Oh My Pi installation or model account of its own.
 
-## Install v0.3.0
+## Install v0.4.0
 
-The installer verifies the binary archive against its SHA-256 checksum. It reuses compatible Node.js and npm on `PATH` or downloads verified upstream copies. Common language servers install by default. Install Git for patch validation, patch application, and LSP rename previews. [Release and checksums](https://github.com/y26s4824k264/omp-toolkit/releases/tag/v0.3.0)
+The installer verifies the binary archive against its SHA-256 checksum. It reuses compatible Node.js and npm on `PATH` or downloads verified upstream copies. Common language servers install by default. Install Git for patch validation, patch application, and LSP rename previews. [Release and checksums](https://github.com/y26s4824k264/omp-toolkit/releases/tag/v0.4.0)
 
 **macOS and Linux**
 
 ```sh
-curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.3.0/install.sh && bash install.sh --version v0.3.0
+curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.4.0/install.sh && bash install.sh --version v0.4.0
 ```
 
 **Windows PowerShell 5.1 or later**
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.3.0/install.ps1 -OutFile install.ps1; if ($?) { & .\install.ps1 -Version v0.3.0 }
+Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.4.0/install.ps1 -OutFile install.ps1; if ($?) { & .\install.ps1 -Version v0.4.0 }
 ```
 
 The default directories are `$HOME/.local/omp-toolkit` and `%LOCALAPPDATA%\OMP Toolkit`. Use `--prefix DIR` or `-Prefix DIR` for a custom location. Use `--without-lsp-servers` or `-WithoutLspServers` to skip the common language servers. Follow the installer output to add `bin` to `PATH`, then run `omp-refactor --version` and `omp-toolkit-mcp --version`.
@@ -25,11 +25,11 @@ The default directories are `$HOME/.local/omp-toolkit` and `%LOCALAPPDATA%\OMP T
 For an install that leaves client settings untouched, run the downloaded script with `none`.
 
 ```sh
-bash install.sh --version v0.3.0 --client none
+bash install.sh --version v0.4.0 --client none
 ```
 
 ```powershell
-& .\install.ps1 -Version v0.3.0 -Client none
+& .\install.ps1 -Version v0.4.0 -Client none
 ```
 
 | Platform | Architectures | Requirements |
@@ -109,7 +109,7 @@ omp-refactor --root . learn skill update patch-review --description 'Review a Gi
 
 ## Track a long-running goal
 
-The current source build includes `omp-refactor goal`. It stores a goal ID, its objective and acceptance criteria, and a separate current milestone in `.omp-toolkit/goals/`. Use the same project root and ID to resume it. Hosts like Codex can keep their native goal active while the project record tracks milestone and evidence details. The structure follows Oh My Pi's separate goal and todo state. [Oh My Pi goal continuation](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-continuation.md) · [Todo state](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-todo-context.md)
+`omp-refactor goal` stores a goal ID, its objective and acceptance criteria, and a separate current milestone in `.omp-toolkit/goals/`. Use the same project root and ID to resume it. Hosts like Codex can keep their native goal active while the project record tracks milestone and evidence details. The structure follows Oh My Pi's separate goal and todo state. [Oh My Pi goal continuation](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-continuation.md) · [Todo state](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-todo-context.md)
 
 ```sh
 omp-refactor --root . goal init release --objective 'Publish and verify the update' --criterion 'Platform tests pass' --criterion 'Public installation works'
@@ -118,7 +118,7 @@ omp-refactor --root . goal record release 1 'CI run 123 passed the required plat
 omp-refactor --root . goal show release
 ```
 
-`goal list` shows saved IDs. `goal clear-evidence release 1` withdraws stale evidence. `ready_for_review` indicates every criterion has a recorded reference. Confirm that those references still prove the objective before closing the host goal. The v0.3.0 bundles predate this command.
+`goal list` shows saved IDs. `goal clear-evidence release 1` withdraws stale evidence. `ready_for_review` indicates every criterion has a recorded reference. Confirm that those references still prove the objective before closing the host goal.
 
 ## Other commands
 
