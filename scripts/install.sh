@@ -71,10 +71,7 @@ upstream_dir="$stage_dir/upstream"
 mkdir -p "$upstream_dir"
 git -C "$upstream_source" archive "$upstream_commit" | tar -xf - -C "$upstream_dir"
 
-shell_example="$upstream_dir/crates/shell/examples/omp_shell_cli"
-mkdir -p "$shell_example"
-cp "$toolkit_dir/shell/omp_shell_cli.rs" "$shell_example/main.rs"
-cp "$toolkit_dir/src/log_preview.rs" "$shell_example/log_preview.rs"
+node "$toolkit_dir/scripts/prepare-shell.mjs" "$upstream_dir"
 
 (
     cd "$toolkit_dir"

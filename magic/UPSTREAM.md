@@ -13,3 +13,5 @@ The deterministic Magic editing engine and apply prompts are from [Oh My Pi v19.
 The toolkit resolves the pure TypeScript modules directly on Node.js 24. The CLI adapts section merging, prompt rendering, snapshot normalization, and reply checks from `packages/coding-agent/src/edit/magic.ts`. The current AI generates line operations from the prepared prompt. The toolkit checks the result against the same project snapshot and produces a Git patch for review.
 
 Local compiler changes preserve literal dollar signs in `sub` replacements, bound replacement growth, and restrict operation lookup to declared names.
+
+The line compiler, file views, and apply prompts also include the improvements from [upstream commit `8829553`](https://github.com/can1357/oh-my-pi/commit/88295533e6958658b362535aa5225fad8fa7eb1a), shipped in v19.2.0. The CLI uses its bundled parser for bounded syntax diagnosis and reports the result to the host agent.

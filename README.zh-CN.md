@@ -92,6 +92,8 @@ git apply --check -- magic.patch
 
 这些命令只预览，不直接写入源码。确认完整差异后，再用 `git apply -- PATH.patch` 应用。源码变化后需重新预览。
 
+从当前源码构建的版本支持用 `sub` 插入多行替换文本。编辑后的文件解析失败时，预览会尝试指出破坏语法的操作，按提示修正后即可重跑。
+
 ## 保存项目经验和技能草稿
 
 用 `--root` 指定记录所属的项目。`save` 去重保存经验，`list` 查看记录，`skill preview` 输出草稿。`create` 在 `.omp-toolkit/learning/skills/` 下创建新的 `SKILL.md`，`update` 用来更新已经创建的草稿。审阅后再安装到编程智能体中。
@@ -130,6 +132,8 @@ omp-refactor --root . goal show release
 | 通过 MCP 检查本机运行状态 | `service_ready` 检查环回端口或新增日志行。`profile_summary` 读取 V8 或 macOS `sample` 报告。`token_count` 离线估算文件 token。 |
 
 用命令或子命令的 `--help` 查看参数。MCP 客户端会显示各工具的参数结构。
+
+从当前源码构建的 `ranked-find` 会遵守 Git worktree 共享的 `info/exclude`。用该 worktree 作为 `--root`，搜索超时后缩小范围再查。macOS 和 Linux 上取消前台任务时，向本次 `run-log` 发送 `SIGINT` 或 `SIGTERM`，它会清理所属进程并保留原始日志。需要持续运行的服务交由宿主的任务管理器。
 
 ## 从旧版升级
 

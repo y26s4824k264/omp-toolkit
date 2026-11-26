@@ -13,6 +13,7 @@ use anyhow::{Context, Result, ensure};
 use omp_xfs::{
     Fs,
     grep::{self, GrepOptions},
+    walk::Stop,
 };
 use regex::RegexBuilder;
 use serde::Serialize;
@@ -105,11 +106,32 @@ fn rank(root: &Path, query: &str, limit: usize) -> Result<RankedResults> {
         .enable_all()
         .build()
         .context("start ranked-find search runtime")?;
-    let scan = runtime
-        .block_on(async {
-            tokio::time::timeout(SCAN_TIMEOUT, grep::grep(&Fs::native(), root, options)).await
-        })
-        .context("ranked-find exceeded the 5-second scan budget; pass a narrower --root")??;
+    // Drive the deadline separately so it can stop a walker even when all
+    // search workers are busy with synchronous filesystem calls.
+    let controller = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .context("start ranked-find timeout controller")?;
+    let stop = Stop::new();
+    let root = root.to_path_buf();
+    let worker_stop = stop.clone();
+    let work = runtime.spawn(async move {
+        worker_stop
+            .scope(grep::grep(&Fs::native(), &root, options))
+            .await
+    });
+    let abort = work.abort_handle();
+    let scan = controller.block_on(async { tokio::time::timeout(SCAN_TIMEOUT, work).await });
+    let scan = match scan {
+        Ok(result) => result.context("ranked-find search task failed")??,
+        Err(error) => {
+            stop.stop();
+            abort.abort();
+            runtime.shutdown_timeout(Duration::from_millis(250));
+            return Err(error)
+                .context("ranked-find exceeded the 5-second scan budget; pass a narrower --root");
+        }
+    };
 
     let mut files: BTreeMap<String, Candidate> = BTreeMap::new();
     for hit in scan.matches {

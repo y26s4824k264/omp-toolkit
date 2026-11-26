@@ -110,6 +110,8 @@ enum EditCommand {
     },
     #[command(hide = true)]
     EditSnapshotPreview,
+    #[command(hide = true)]
+    EditSnapshotParse { file: PathBuf },
 }
 
 pub(crate) struct Change {
@@ -157,6 +159,9 @@ fn main() -> Result<()> {
         EditCommand::Goal { command } => return goal::run(&root, command),
         EditCommand::EditSnapshot { files } => return magic_native::snapshot(&root, &files),
         EditCommand::EditSnapshotPreview => magic_native::preview(&root, io::stdin().lock())?,
+        EditCommand::EditSnapshotParse { file } => {
+            return magic_native::check_syntax(&file, io::stdin().lock());
+        }
         EditCommand::TokenCount { file } => {
             println!("{}", token_count::count_file(&root.join(file))?);
             return Ok(());

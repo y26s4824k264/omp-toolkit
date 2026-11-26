@@ -92,6 +92,8 @@ git apply --check -- magic.patch
 
 The previews leave source files untouched. Inspect the complete diff and apply it with `git apply -- PATH.patch` when satisfied. Prepare a new preview if the source changes.
 
+Builds from current source support multiline `sub` replacements and report likely syntax-breaking operations when the edited file fails to parse. Review the indicated operations and rerun the preview.
+
 ## Save project lessons and skill drafts
 
 Use `--root` to choose which project owns the records. `save` deduplicates lessons, `list` reads them, and `skill preview` prints a draft. `create` saves a new `SKILL.md` under `.omp-toolkit/learning/skills/`. `update` intentionally replaces a draft you already created. Review drafts before installing them in a client.
@@ -130,6 +132,8 @@ omp-refactor --root . goal show release
 | Inspect local runtime behavior through MCP | `service_ready` checks a loopback port or new log lines. `profile_summary` reads V8 or macOS `sample` reports. `token_count` estimates file tokens offline. |
 
 Use `--help` on the command or subcommand for parameters. The MCP client shows tool argument schemas.
+
+In builds from current source, `ranked-find` honors the shared `info/exclude` of a linked Git worktree. Use that worktree as `--root` and narrow the root after a timeout. On macOS and Linux, send `SIGINT` or `SIGTERM` to the owning `run-log` command to clean up its foreground command's process family and keep the raw log. Use the host's job manager for persistent services.
 
 ## Upgrade from earlier releases
 

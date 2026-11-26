@@ -108,6 +108,21 @@ fn parses(source: &str, path: &str) -> Result<bool> {
     Ok(parse_code_status(source, None, Some(path))?.is_some())
 }
 
+pub(crate) fn check_syntax(path: &Path, input: impl Read) -> Result<()> {
+    let display = path.to_str().context("Magic requires a UTF-8 file name")?;
+    let mut source = String::new();
+    input
+        .take(MAX_FILE_BYTES as u64 + 1)
+        .read_to_string(&mut source)
+        .context("read Magic source for syntax diagnostics")?;
+    ensure!(
+        source.len() <= MAX_FILE_BYTES,
+        "Magic source is too large: {display}"
+    );
+    println!("{}", parses(&source, display)?);
+    Ok(())
+}
+
 fn load_snapshots(root: &Path, files: &[PathBuf]) -> Result<Vec<Snapshot>> {
     ensure!(
         (1..=MAX_FILES).contains(&files.len()),

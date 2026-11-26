@@ -40,6 +40,16 @@ test('substitutions treat dollar markers literally and bound expansion', () => {
   assert.match(compileLineEdits('["constructor",1]', source, view).problem, /unknown operation/);
 });
 
+test('multiline substitutions inherit indentation shifts', () => {
+  const source = 'function run() {\n  oldCall();\n}\n';
+  const [view] = fileViews(source, 'split and indent the call');
+  const operations = [['sub', 2, 'oldCall();', 'first();\n  second("$&");'], ['indent', 2, 2, 2]];
+  const result = compileLineEdits(JSON.stringify(operations), source, view);
+  assert.ok('edit' in result);
+  assert.equal(source.replace(result.edit.old_string, () => result.edit.new_string),
+    'function run() {\n    first();\n    second("$&");\n}\n');
+});
+
 test('excerpts retain absolute line numbers and reject edits in omitted ranges', () => {
   const source = Array.from({ length: 300 }, (_, index) => `const step${index + 1} = ${index + 1};\n`).join('');
   const [excerpt, whole] = fileViews(source, 'Replace the initializer on line 120.');
@@ -56,7 +66,7 @@ test('block hints flag operations that run beyond a block', () => {
   const [view] = fileViews(source, 'delete block and end call');
   const result = compileLineEdits('["delete",2,5]', source, view);
   assert.ok('edit' in result);
-  assert.match(blockHints(source, result.ranges, view), /line 2 opens a block that ends on line 4/);
+  assert.match(blockHints(source, result.ranges, view).join('\n'), /line 2 opens a block that ends on line 4/);
 });
 
 test('CLI preserves the working tree and checks snapshot, paths, and syntax', {
@@ -94,7 +104,10 @@ test('CLI preserves the working tree and checks snapshot, paths, and syntax', {
     assert.equal(git.status, 0, git.stderr);
     assert.equal(readFileSync(sample, 'utf8'), source);
     assert.match(preview('../other.ts', '["delete",1,1]', 1), /exact plan path/);
-    assert.match(preview(path, '["replace",1,1,"const = ;"]', 1), /syntax error/);
+    const syntaxError = preview(path, '["insert","before",1,"const helper = 2;"]\n["replace",1,1,"const = ;"]', 1);
+    assert.match(syntaxError, /syntax error/);
+    assert.match(syntaxError, /Operation 2 .* breaks syntax around line 1/);
+    assert.doesNotMatch(syntaxError, /Operation 1 .* breaks syntax/);
     writeFileSync(sample, source.replace('(1)', '(2)'));
     assert.match(preview(path, '["sub",1,"oldCall","newCall"]', 1), /Source changed/);
   } finally {

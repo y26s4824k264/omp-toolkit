@@ -201,6 +201,7 @@ test("adds and updates only the managed instructions of matching clients", { ski
       "omp-magic prepare", "omp-magic preview", "omp-refactor sloppy", "omp-refactor learn save",
       "omp-refactor learn list", "omp-refactor learn skill preview", "omp-refactor learn skill create",
       "omp-refactor learn skill update", "omp-context-stats --turn 1",
+      "linked Git worktree", "syntax error", "owning run-log",
     ]) {
       assert.ok(file.includes(command), `Agent instructions are missing ${command}`);
     }

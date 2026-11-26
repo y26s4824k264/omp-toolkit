@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { blockHints, compileLineEdits } from './magic-lines.ts';
+import { blockHints, compileLineEdits, diagnoseSyntaxFailure } from './magic-lines.ts';
 import { splitMagicSections } from './magic-sections.ts';
 import { fileViews } from './magic-view.ts';
 
@@ -53,13 +53,13 @@ function jsonInput(file) {
   }
 }
 
-function native(root, command, args, stdin) {
+function native(root, command, args, stdin, timeout = 60_000) {
   const name = process.platform === 'win32' ? 'omp-refactor.exe' : 'omp-refactor';
   const installed = [`../../bin/${name}`, `../../../bin/${name}`]
     .map(path => fileURLToPath(runtime(path))).find(existsSync);
   const binary = process.env.OMP_REFACTOR_BIN || installed || name;
   const result = spawnSync(binary, ['--root', root, command, ...args], {
-    input: stdin, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 60_000, windowsHide: true,
+    input: stdin, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout, windowsHide: true,
   });
   if (result.error) throw new Error(`Cannot run omp-refactor: ${result.error.message}`);
   if (result.status !== 0) {
@@ -183,16 +183,36 @@ function preview(root, planFile, repliesFile) {
     const compiled = compileLineEdits(operations, content, view);
     if ('problem' in compiled) throw new Error(`[${path}] ${compiled.problem}${retry}`);
     const hints = blockHints(content, compiled.ranges, view);
-    if (hints && !reply.confirmRange) {
-      throw new Error(`[${path}] ${hints}. Correct the range or set confirmRange to true after reviewing it.${retry}`);
+    if (hints.length && !reply.confirmRange) {
+      throw new Error(`[${path}] ${hints.join('\n')}. Correct the range or set confirmRange to true after reviewing it.${retry}`);
     }
     const { old_string, new_string } = compiled.edit;
     const at = content.indexOf(old_string);
     if (at < 0 || at !== content.lastIndexOf(old_string)) throw new Error(`[${path}] Replacement anchor is not unique.`);
     const after = content.slice(0, at) + new_string + content.slice(at + old_string.length);
-    return { path, before, after };
+    return { path, before, after, content, view, operations: compiled.operations };
   });
-  return native(root, 'edit-snapshot-preview', [], JSON.stringify(edits));
+  const replacements = edits.map(({ path, before, after }) => ({ path, before, after }));
+  try {
+    return native(root, 'edit-snapshot-preview', [], JSON.stringify(replacements));
+  } catch (error) {
+    const failed = edits.find(({ path }) => error.message === `Error: Magic edit produces a syntax error in ${path}`);
+    if (!failed) throw error;
+    const deadline = performance.now() + 2_000;
+    let checks = 0;
+    let detail;
+    try {
+      detail = diagnoseSyntaxFailure(failed.operations, failed.content, failed.view, code => {
+        const remaining = Math.floor(deadline - performance.now());
+        if (++checks > 64 || remaining < 1) throw new Error('Magic diagnostic budget exhausted');
+        return native(root, 'edit-snapshot-parse', ['--', failed.path], code, remaining).trim() === 'true';
+      });
+    } catch {
+      // The original validation error is authoritative if diagnosis cannot finish.
+      throw error;
+    }
+    throw new Error(detail ? `${error.message}\n${detail}` : error.message);
+  }
 }
 
 function main() {

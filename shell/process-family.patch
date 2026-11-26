@@ -1,0 +1,406 @@
+diff --git a/crates/shell/src/proctree.rs b/crates/shell/src/proctree.rs
+index 03cb012..f41de5b 100644
+--- a/crates/shell/src/proctree.rs
++++ b/crates/shell/src/proctree.rs
+@@ -1066,6 +1066,12 @@ pub struct TerminationTargets {
+ 	pgids:     Vec<i32>,
+ 	processes: Vec<Process>,
+ 	seen_pids: HashSet<i32>,
++	/// Unix: the targets and every process descended from them, in any group
++	/// or session, as of the last wave ([`crate::sys::proc::family`]). The
++	/// next wave starts from it, so a member a TERM orphaned (a debugger's
++	/// stopped inferior, a `setsid` daemon) still gets the KILL.
++	#[cfg(unix)]
++	family:    Vec<crate::sys::proc::ProcInfo>,
+ }
+
+ impl TerminationTargets {
+@@ -1118,14 +1124,53 @@ impl TerminationTargets {
+ 	/// Send `signal` to every recorded target. Failures are swallowed:
+ 	/// targets routinely exit between collection and signalling, and
+ 	/// the caller's policy is "best effort".
+-	pub fn signal(&self, signal: i32) {
++	///
++	/// On Unix each wave first takes the targets' whole family from one scan
++	/// of the process table (starting from the previous wave's), then signals
++	/// the groups and every member outside them, and continues the stopped
++	/// ones; elsewhere it signals each process tree.
++	pub fn signal(&mut self, signal: i32) {
++		#[cfg(unix)]
++		self.refresh_family();
+ 		for &pgid in &self.pgids {
+ 			let _ = kill_process_group(pgid, signal);
+ 		}
++		#[cfg(unix)]
++		crate::sys::proc::signal_each(
++			self.family.iter().filter(|p| !self.pgids.contains(&p.pgid)),
++			signal,
++		);
++		#[cfg(not(unix))]
+ 		for process in &self.processes {
+ 			let _ = process.signal_tree(signal);
+ 		}
+ 	}
++
++	/// Re-take [`TerminationTargets::family`] from the recorded processes
++	/// still running, the members of the recorded groups, and the previous
++	/// family.
++	#[cfg(unix)]
++	fn refresh_family(&mut self) {
++		use crate::sys::proc;
++		let Ok(table) = proc::list() else {
++			return;
++		};
++		let mut roots: Vec<proc::ProcInfo> = table
++			.iter()
++			.filter(|p| self.pgids.contains(&p.pgid) && !is_self_process_group(p.pgid))
++			.cloned()
++			.collect();
++		for process in &self.processes {
++			// Still running after the scan: its pid named it during the scan.
++			if process.status() == ProcessStatus::Running
++				&& let Some(p) = table.iter().find(|p| p.pid == process.pid())
++			{
++				roots.push(p.clone());
++			}
++		}
++		roots.append(&mut self.family);
++		self.family = proc::family(&table, &roots);
++	}
+ }
+
+ #[cfg(test)]
+diff --git a/crates/shell/src/sys/lifecycle.rs b/crates/shell/src/sys/lifecycle.rs
+index b9e0ed1..9fdafd7 100644
+--- a/crates/shell/src/sys/lifecycle.rs
++++ b/crates/shell/src/sys/lifecycle.rs
+@@ -186,6 +186,11 @@ impl Lifecycle {
+ 		Abandon::Escalate { term, kill_at: self.kill_due.unwrap_or(kill_at) }
+ 	}
+
++	#[cfg(unix)]
++	pub const fn collected(&self) -> bool {
++		self.collected
++	}
++
+ 	/// The `ExtProc` of a detached external ([`crate::bash::Lineage::detached`])
+ 	/// is dropped: unlike [`Lifecycle::abandon`] nothing is signalled, the
+ 	/// process runs on and whoever observes its exit reaps it. Returns
+diff --git a/crates/shell/src/sys/proc.rs b/crates/shell/src/sys/proc.rs
+index 4a49af4..052d273 100644
+--- a/crates/shell/src/sys/proc.rs
++++ b/crates/shell/src/sys/proc.rs
+@@ -9,7 +9,7 @@
+ //! recheck immediately before `kill` (the remaining window is a pid wrapping
+ //! around within microseconds).
+
+-use std::io;
++use std::{collections::HashMap, io};
+
+ use bstr::BString;
+
+@@ -120,6 +120,81 @@ pub fn signal_pinned(p: &ProcInfo, sig: Signal) -> io::Result<bool> {
+ 	sys::signal_pinned(p, i32::from(sig.number(Platform::current())))
+ }
+
++/// `roots` and every process descended from them in `table`, a snapshot of
++/// the process table: their children, the children's children, and so on,
++/// widened by every member of a process group or session a process of the
++/// set leads. The widening keeps what a dying parent leaves to init: a
++/// debugger's inferior in a group of its own, a `setsid` daemon, a job's
++/// `(cmd &)` subshell. Take it before signalling any of them, while the
++/// parent links still hold.
++///
++/// A root counts only while its pid still names the process scanned (same
++/// start time). A group or session member must have started no earlier than
++/// its leader (an older process with that id is in a group or session of a
++/// recycled pid), and the caller's own process, group and session are never
++/// taken in.
++pub fn family(table: &[ProcInfo], roots: &[ProcInfo]) -> Vec<ProcInfo> {
++	let me = std::process::id() as i32;
++	// SAFETY: plain syscalls without pointer arguments.
++	let (my_pgid, my_sid) = unsafe { (libc::getpgid(0), libc::getsid(0)) };
++	let mut by_parent: HashMap<i32, Vec<usize>> = HashMap::new();
++	let mut by_group: HashMap<i32, Vec<usize>> = HashMap::new();
++	let mut by_session: HashMap<i32, Vec<usize>> = HashMap::new();
++	for (i, p) in table.iter().enumerate() {
++		by_parent.entry(p.ppid).or_default().push(i);
++		if p.pgid != my_pgid {
++			by_group.entry(p.pgid).or_default().push(i);
++		}
++		if p.sid != my_sid {
++			by_session.entry(p.sid).or_default().push(i);
++		}
++	}
++	let mut taken = vec![false; table.len()];
++	let mut queue = Vec::new();
++	for (i, p) in table.iter().enumerate() {
++		if p.pid != me && roots.iter().any(|r| r.pid == p.pid && r.start == p.start) {
++			taken[i] = true;
++			queue.push(i);
++		}
++	}
++	while let Some(i) = queue.pop() {
++		let leader = &table[i];
++		let linked = [&by_parent, &by_group, &by_session]
++			.into_iter()
++			.filter_map(|index| index.get(&leader.pid))
++			.flatten();
++		for &j in linked {
++			if !taken[j] && table[j].pid != me && table[j].start >= leader.start {
++				taken[j] = true;
++				queue.push(j);
++			}
++		}
++	}
++	table
++		.iter()
++		.zip(taken)
++		.filter_map(|(p, taken)| taken.then(|| p.clone()))
++		.collect()
++}
++
++/// Send signal number `sig` to each of `procs` that still is the process
++/// scanned (zombies skipped), then `SIGCONT` to each one that was stopped: a
++/// stopped process acts on `TERM` only once continued, and one whose tracer
++/// is gone stays stopped forever. A process that refuses (`EPERM`, a setuid
++/// member) does not spare the rest. Returns the number of processes signalled.
++pub fn signal_each<'a>(procs: impl IntoIterator<Item = &'a ProcInfo>, sig: i32) -> usize {
++	let mut sent = 0;
++	for p in procs.into_iter().filter(|p| p.state != ProcState::Zombie) {
++		if matches!(sys::signal_pinned(p, sig), Ok(true)) {
++			sent += 1;
++			if p.state == ProcState::Stopped {
++				let _ = sys::signal_pinned(p, libc::SIGCONT);
++			}
++		}
++	}
++	sent
++}
++
+ /// Split a Linux `/proc/<pid>/stat` line into `(comm, fields after comm)`.
+ /// The command name may itself contain spaces and parentheses, so it ends at
+ /// the *last* `)`.
+diff --git a/crates/shell/src/sys/spawn/unix.rs b/crates/shell/src/sys/spawn/unix.rs
+index 2280773..6d60d65 100644
+--- a/crates/shell/src/sys/spawn/unix.rs
++++ b/crates/shell/src/sys/spawn/unix.rs
+@@ -262,14 +262,27 @@ impl Scope {
+ 		}
+ 	}
+
+-	/// KILL whatever is left in the scope after the external exited
+-	/// (identity-pinned; a `Process` scope has nothing beyond the pid).
+-	fn sweep(self) {
+-		let _ = match self {
+-			Self::Group(id) => proc::kill_group(id, Signal::Kill),
+-			Self::Session(id) => proc::kill_session(id, Signal::Kill),
+-			Self::Process { .. } => return,
++	/// KILL whatever is left in the scope after the external exited, and
++	/// every process of `family` (taken when the external was terminated or
++	/// abandoned) with whatever those have started since, wherever they are
++	/// now: a member that moved to a group or session of its own (a
++	/// debugger's stopped inferior, a `setsid` daemon) is no longer in the
++	/// scope, and its parent's TERM may have left it to init.
++	/// Identity-pinned; a `Process` scope has nothing beyond the pid (and
++	/// no family: [`UnixProc::family`]).
++	fn sweep(self, family: &[ProcInfo]) {
++		if matches!(self, Self::Process { .. }) {
++			return;
++		}
++		let Ok(table) = proc::list() else {
++			return;
+ 		};
++		let doomed = proc::family(&table, family);
++		let me = std::process::id() as i32;
++		let rest = table
++			.iter()
++			.filter(|p| p.pid != me && self.contains(p) && !doomed.iter().any(|d| d.pid == p.pid));
++		proc::signal_each(doomed.iter().chain(rest), libc::SIGKILL);
+ 	}
+ }
+
+@@ -701,6 +714,7 @@ pub(super) fn spawn(shared: &Arc<Shared>, spec: SpawnSpec<'_>) -> io::Result<Box
+ 		tracker,
+ 		shared: Arc::clone(shared),
+ 		detached: lineage.detached,
++		family: Vec::new(),
+ 		pumps,
+ 		#[cfg(target_os = "linux")]
+ 		pidfd,
+@@ -1562,6 +1576,8 @@ struct UnixProc {
+ 	/// [`crate::bash::Lineage::detached`]: dropping it while it runs releases
+ 	/// the process instead of escalating TERM → KILL.
+ 	detached: bool,
++	/// Identity-pinned descendants captured before cancellation can orphan them.
++	family:   Vec<ProcInfo>,
+ 	/// The child's pumps and the shared input feeds it holds (kept open
+ 	/// while this lives), driven by `poll_wait`.
+ 	pumps:    Pumps,
+@@ -1575,6 +1591,26 @@ struct UnixProc {
+ 	awaited:  bool,
+ }
+
++impl UnixProc {
++	/// Capture the live family before signalling, seeded with any previous wave.
++	fn family(&self) -> Vec<ProcInfo> {
++		if matches!(self.scope, Scope::Process { .. }) {
++			return Vec::new();
++		}
++		let Ok(table) = proc::list() else {
++			return self.family.clone();
++		};
++		let mut roots: Vec<_> = table.iter().filter(|p| p.pid == self.pid).cloned().collect();
++		roots.extend(self.family.iter().cloned());
++		proc::family(&table, &roots)
++	}
++
++	/// Continue and terminate members that left the original process scope.
++	fn term_outside_scope(&self, family: &[ProcInfo]) {
++		proc::signal_each(family.iter().filter(|p| !self.scope.contains(p)), libc::SIGTERM);
++	}
++}
++
+ #[cfg(target_os = "linux")]
+ impl UnixProc {
+ 	/// Parked: record the exit if the process has exited (unreaped); whether
+@@ -1650,6 +1686,9 @@ impl ExtProc for UnixProc {
+ 	}
+
+ 	fn signal(&mut self, sig: Signal) -> io::Result<()> {
++		if matches!(sig, Signal::Term | Signal::Kill) && !self.detached {
++			self.family = self.family();
++		}
+ 		self.tracker.lock().signalled(sig);
+ 		self.scope.signal(sig)
+ 	}
+@@ -1674,6 +1713,14 @@ impl Drop for UnixProc {
+ 			crate::sys::park::exits::forget(self.pid);
+ 		}
+ 		let grace = self.shared.config.grace;
++		// Taken before anything is signalled, so no member is orphaned
++		// mid-walk. Only the engine polls the tracker, so an exit that is
++		// not collected now is not collected below either.
++		let family = if self.detached || self.tracker.lock().collected() {
++			Vec::new()
++		} else {
++			self.family()
++		};
+ 		let mut life = self.tracker.lock();
+ 		if self.detached {
+ 			let exited = life.release();
+@@ -1699,8 +1746,9 @@ impl Drop for UnixProc {
+ 				}
+ 				let _ = self.scope.signal(Signal::Cont);
+ 				drop(life);
++				self.term_outside_scope(&family);
+ 				self.shared.state.reap(self.pid);
+-				escalate_at(&self.tracker, self.scope, sweep_at);
++				escalate_at(&self.tracker, self.scope, sweep_at, family);
+ 			},
+ 			Abandon::Escalate { term, kill_at } => {
+ 				// Under the lock: the waiter cannot record the exit and reap
+@@ -1711,7 +1759,8 @@ impl Drop for UnixProc {
+ 				// A stopped (paused) group acts on TERM only once continued.
+ 				let _ = self.scope.signal(Signal::Cont);
+ 				drop(life);
+-				escalate_at(&self.tracker, self.scope, kill_at);
++				self.term_outside_scope(&family);
++				escalate_at(&self.tracker, self.scope, kill_at, family);
+ 				// Parked: a waiter observes the exit and reaps.
+ 				#[cfg(target_os = "linux")]
+ 				self.unpark();
+@@ -1722,23 +1771,26 @@ impl Drop for UnixProc {
+
+ /// [`escalate`] on a thread of its own; at once when no thread can be
+ /// started (KILL now rather than never).
+-fn escalate_at(tracker: &Arc<Tracker>, scope: Scope, kill_at: Instant) {
++fn escalate_at(tracker: &Arc<Tracker>, scope: Scope, kill_at: Instant, family: Vec<ProcInfo>) {
+ 	let waiter = Arc::clone(tracker);
++	// A failed thread spawn drops its closure: share the family with it.
++	let family: Arc<[ProcInfo]> = family.into();
++	let theirs = Arc::clone(&family);
+ 	let started = thread::Builder::new()
+ 		.name("obash-kill".into())
+ 		.stack_size(SMALL_STACK)
+-		.spawn(move || escalate(&waiter, scope, kill_at));
++		.spawn(move || escalate(&waiter, scope, kill_at, &theirs));
+ 	if started.is_err() {
+ 		let now = Instant::now();
+ 		tracker.lock().schedule_kill(now);
+-		escalate(tracker, scope, now);
++		escalate(tracker, scope, now, &family);
+ 	}
+ }
+
+ /// After `kill_at`: KILL the scope if its leader is still running (under the
+ /// lock, so it is unreaped), then every straggler left in a group or session
+-/// (identity-pinned).
+-fn escalate(tracker: &Tracker, scope: Scope, kill_at: Instant) {
++/// and every process of `family` and its descendants (identity-pinned).
++fn escalate(tracker: &Tracker, scope: Scope, kill_at: Instant, family: &[ProcInfo]) {
+ 	let now = Instant::now();
+ 	if kill_at > now {
+ 		thread::sleep(kill_at - now);
+@@ -1749,7 +1801,7 @@ fn escalate(tracker: &Tracker, scope: Scope, kill_at: Instant) {
+ 			let _ = scope.signal(Signal::Kill);
+ 		}
+ 	}
+-	scope.sweep();
++	scope.sweep(family);
+ }
+
+ fn leftover_procs(shared: &Shared) -> io::Result<Vec<(Scope, ProcInfo)>> {
+diff --git a/crates/shell/src/sys/spawn/unix/tests.rs b/crates/shell/src/sys/spawn/unix/tests.rs
+index fb80be2..c9b47cb 100644
+--- a/crates/shell/src/sys/spawn/unix/tests.rs
++++ b/crates/shell/src/sys/spawn/unix/tests.rs
+@@ -753,6 +753,48 @@ fn abandoning_a_paused_job_still_terminates_it() {
+ 	until("terminated", || proc::info(pid).is_none_or(|i| i.state == ProcState::Zombie));
+ }
+
++/// KILLs (and continues) a stray process when a case ends, failed or not.
++struct KillOnDrop(proc::ProcInfo);
++
++impl Drop for KillOnDrop {
++	fn drop(&mut self) {
++		let _ = proc::signal_pinned(&self.0, Signal::Kill);
++		let _ = proc::signal_pinned(&self.0, Signal::Cont);
++	}
++}
++
++/// A debugger's inferior (lldb's, which outlived a timed-out job stopped
++/// and orphaned): a grandchild that moved to a session of its own and
++/// stopped itself is outside the external's session, and the cancel's TERM
++/// kills its parent and leaves it to init before the KILL. The cancel
++/// (TERM, then the drop) must still kill it.
++///
++/// Needs `/usr/bin/perl` (macOS and Debian-family Linux ship it) for `setsid`.
++#[test]
++fn cancel_kills_a_stopped_grandchild_in_a_session_of_its_own() {
++	let env = EnvView::default();
++	let grace = Duration::from_millis(300);
++	let s = spawner(Sessions::Detach, grace);
++	// It ignores TERM and HUP and sleeps on once continued: only the KILL
++	// after the grace ends it, when its parent is long dead.
++	let a = sh("/usr/bin/perl -e '$SIG{HUP} = $SIG{TERM} = q(IGNORE); use POSIX (); \
++	            POSIX::setsid() > 0 or die; kill(q(STOP), $$); sleep 30' & wait");
++	let mut p = s.spawn(spec(&a, &env, NEW)).unwrap();
++	let pid = p.pid() as i32;
++	let inferior = KillOnDrop(child_of(pid));
++	let ipid = inferior.0.pid;
++	until("grandchild stopped in its own session", || {
++		proc::info(ipid).is_some_and(|i| i.state == ProcState::Stopped && i.sid == ipid)
++	});
++	let start = Instant::now();
++	p.signal(Signal::Term).unwrap();
++	drop(p);
++	until("grandchild killed", || {
++		proc::info(ipid).is_none_or(|i| i.start != inferior.0.start || i.state == ProcState::Zombie)
++	});
++	assert!(start.elapsed() >= grace, "it ignores TERM: only the KILL ends it");
++}
++
+ #[test]
+ fn a_scripts_term_does_not_escalate() {
+ 	let env = EnvView::default();

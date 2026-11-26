@@ -221,6 +221,9 @@ fn run_log(args: Vec<OsString>) -> Result<u8> {
 
 #[cfg(unix)]
 fn wait_for_command(command: Command) -> io::Result<ExitStatus> {
+    use std::{os::unix::process::ExitStatusExt, time::Duration};
+
+    use omp_shell::proctree::TerminationTargets;
     use tokio::signal::unix::{SignalKind, signal};
 
     // Keep the child in the foreground process group so the terminal still
@@ -230,18 +233,29 @@ fn wait_for_command(command: Command) -> io::Result<ExitStatus> {
         .build()?
         .block_on(async move {
             let mut terminate = signal(SignalKind::terminate())?;
+            let mut interrupt = signal(SignalKind::interrupt())?;
             let mut child = tokio::process::Command::from(command).spawn()?;
-            loop {
-                tokio::select! {
-                    biased;
-                    result = child.wait() => return result,
-                    _ = terminate.recv() => {
-                        if let Some(process) = child.id().and_then(|id| Process::from_pid(id as i32)) {
-                            let _ = process.kill_tree(Some(libc::SIGTERM));
-                        }
-                    }
-                }
+            let mut targets = TerminationTargets::new();
+            if let Some(id) = child.id() {
+                targets.add_pid(id as i32);
             }
+            let requested = tokio::select! {
+                biased;
+                _ = terminate.recv() => libc::SIGTERM,
+                _ = interrupt.recv() => libc::SIGINT,
+                result = child.wait() => return result,
+            };
+            targets.signal(requested);
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {},
+                _ = terminate.recv() => {},
+                _ = interrupt.recv() => {},
+            }
+            // Use the same targets even if the first wave orphaned some of them.
+            targets.signal(libc::SIGKILL);
+            let _ = child.start_kill();
+            child.wait().await?;
+            Ok(ExitStatus::from_raw(requested))
         })
 }
 

@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
@@ -124,6 +125,63 @@ async function smokeMcp(config) {
     }
 }
 
+async function smokeRunLogCancellation(shell, signal, code) {
+    const log = join(temp, `${signal}.log`);
+    const pidFile = join(temp, `${signal}.pid`);
+    const worker = `
+      process.on('SIGINT', () => {});
+      process.on('SIGTERM', () => {});
+      require('node:fs').writeFileSync(process.argv[1], String(process.pid));
+      console.log('detached worker ready');
+      setInterval(() => {}, 1000);
+    `;
+    const foreground = `
+      require('node:child_process').spawn(process.execPath,
+        ['-e', process.argv[1], process.argv[2]], { detached: true, stdio: 'inherit' });
+      setInterval(() => {}, 1000);
+    `;
+    const invocation = spawn(shell, ['run-log', '--log', log, '--', process.execPath, '-e', foreground,
+        worker, pidFile], { stdio: 'ignore' });
+    const closed = once(invocation, 'close');
+    let workerPid;
+    try {
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+            if (invocation.exitCode !== null) break;
+            try {
+                workerPid = Number(readFileSync(pidFile, 'utf8'));
+                if (workerPid > 0 && readFileSync(log, 'utf8').includes('detached worker ready')) break;
+            } catch (error) {
+                if (error.code !== 'ENOENT') throw error;
+            }
+            await delay(20);
+        }
+        assert.ok(workerPid > 0);
+        assert.match(readFileSync(log, 'utf8'), /detached worker ready/);
+        assert.ok(invocation.kill(signal));
+        const result = await Promise.race([closed, delay(10_000, null, { ref: false })]);
+        assert.deepEqual(result, [code, null]);
+        const tree = spawnSync(shell, ['process-tree', String(workerPid), '--depth', '0', '--json'],
+            { encoding: 'utf8', timeout: 5_000 });
+        assert.equal(tree.error, undefined);
+        if (tree.status === 0) {
+            assert.equal(JSON.parse(tree.stdout).processes[0].status, 'exited');
+        } else {
+            assert.equal(tree.status, 1, tree.stderr);
+            assert.match(tree.stderr, /cannot inspect PID/i);
+        }
+        workerPid = undefined;
+        assert.match(readFileSync(log, 'utf8'), /detached worker ready/);
+    } finally {
+        if (invocation.exitCode === null) invocation.kill('SIGKILL');
+        if (workerPid > 0) {
+            try { process.kill(workerPid, 'SIGKILL'); } catch (error) {
+                if (error.code !== 'ESRCH') throw error;
+            }
+        }
+    }
+}
+
 try {
     const sha256 = createHash('sha256').update(readFileSync(archive)).digest('hex');
     writeFileSync(checksum, `${sha256}  ${asset}\n`);
@@ -161,6 +219,16 @@ try {
         '--root', project, 'ranked-find', 'oldCall result', '--limit', '2',
     ]));
     assert.equal(ranked.results[0].path, file);
+    const worktree = join(temp, 'Linked Worktree');
+    run('git', ['-C', project, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com',
+        'commit', '--quiet', '--allow-empty', '-m', 'worktree fixture']);
+    run('git', ['-C', project, 'worktree', 'add', '--quiet', '--detach', worktree, 'HEAD']);
+    writeFileSync(join(project, '.git', 'info', 'exclude'), 'ignored.txt\n');
+    writeFileSync(join(worktree, 'ignored.txt'), 'worktreemarker\n');
+    writeFileSync(join(worktree, 'visible.txt'), 'worktreemarker\n');
+    assert.equal(run('git', ['-C', worktree, 'check-ignore', 'ignored.txt']).trim(), 'ignored.txt');
+    const worktreeResults = JSON.parse(run(refactor, ['--root', worktree, 'ranked-find', 'worktreemarker']));
+    assert.deepEqual(worktreeResults.results.map(entry => entry.path), ['visible.txt']);
 
     writeFileSync(join(project, 'change.edit'), `*** Edit File: ${file}\n*** Find\noldCall(7)\n*** Replace\nnewCall(7)\n`);
     const anchoredPatch = run(refactor, ['--root', project, 'sloppy', '--patch', join(project, 'change.edit'), file]);
@@ -219,6 +287,10 @@ try {
     assert.equal(shellResult.error, undefined);
     assert.equal(shellResult.status, 7, shellResult.stderr);
     assert.match(readFileSync(join(temp, 'exit.log'), 'utf8'), /release fixture/);
+    if (!windows) {
+        await smokeRunLogCancellation(shell, 'SIGTERM', 143);
+        await smokeRunLogCancellation(shell, 'SIGINT', 130);
+    }
     const tree = JSON.parse(run(shell, ['process-tree', String(process.pid), '--depth', '0', '--json']));
     assert.equal(tree.processes[0].pid, process.pid);
     assert.equal(tree.processes[0].status, 'running');
