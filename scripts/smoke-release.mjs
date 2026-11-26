@@ -88,8 +88,9 @@ async function smokeMcp(config) {
         send({ method: 'notifications/initialized' });
         const tools = (await request('tools/list')).tools.map(tool => tool.name).sort();
         assert.deepEqual(tools, [
-            'ast_find', 'ast_preview', 'hashline_preview', 'hashline_read', 'log_minimize',
-            'profile_summary', 'read_summary', 'service_ready', 'shell_parse', 'token_count',
+            'ast_find', 'ast_preview', 'hashline_preview', 'hashline_read', 'image_read',
+            'log_minimize', 'office_read', 'profile_summary', 'read_summary', 'service_ready',
+            'shell_parse', 'token_count',
         ]);
 
         const root = project;
@@ -116,6 +117,18 @@ async function smokeMcp(config) {
         });
         assert.equal(JSON.parse(readiness).status, 'ready');
         assert.match(await call('profile_summary', { root, file: 'fixture.cpuprofile' }), /work/);
+        const image = await request('tools/call', {
+            name: 'image_read', arguments: { root, file: 'fixture.png' },
+        });
+        assert.equal(image.isError, false);
+        assert.equal(image.content.length, 1);
+        assert.equal(JSON.parse(image.content[0].text).width, 1);
+        const preview = await request('tools/call', {
+            name: 'image_read', arguments: { root, file: 'fixture.png', max_edge: 32 },
+        });
+        assert.equal(preview.isError, false);
+        assert.equal(preview.content[1].type, 'image');
+        assert.equal(preview.content[1].mimeType, 'image/png');
         assert.equal(readFileSync(join(project, file), 'utf8'), source);
         server.stdin.end();
         assert.deepEqual(await closed, [0, null]);
@@ -199,6 +212,10 @@ try {
     run('git', ['init', '--quiet', project]);
     writeFileSync(join(project, file), source);
     writeFileSync(join(project, 'server.log'), 'READY on loopback\n');
+    writeFileSync(join(project, 'fixture.png'), Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
+        'base64',
+    ));
     writeFileSync(join(project, 'fixture.cpuprofile'), JSON.stringify({
         nodes: [{ id: 1, callFrame: { functionName: 'work', url: 'file:///sample.ts', lineNumber: 0 } }],
         startTime: 0, endTime: 1000, samples: [1], timeDeltas: [1000],

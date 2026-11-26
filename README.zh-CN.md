@@ -135,6 +135,19 @@ omp-refactor --root . goal show release
 
 从当前源码构建的 `ranked-find` 会遵守 Git worktree 共享的 `info/exclude`。用该 worktree 作为 `--root`，搜索超时后缩小范围再查。macOS 和 Linux 上取消前台任务时，向本次 `run-log` 发送 `SIGINT` 或 `SIGTERM`，它会清理所属进程并保留原始日志。需要持续运行的服务交由宿主的任务管理器。
 
+## 通过 MCP 读取 Office 和图片
+
+两个工具都接收绝对目录 `root` 和目录内的相对路径 `file`。
+
+| 用途 | 除 `root` 和 `file` 之外的参数 |
+| --- | --- |
+| 读取 DOCX 正文 | `office_read` 接收 `start`、`end`。从 1 开始，包含首尾，每个段落或表格行占一个块。 |
+| 读取 PPT 文字和演讲者备注 | `office_read` 接收 `start`、`end`。按放映顺序从 1 开始，包含首尾。 |
+| 读取 Excel | 省略 `sheet` 可列出工作表。指定 `sheet` 和 A1 `range`，例如 `B4:E12`，可返回非空单元格的坐标、值和公式。公式单元格的值来自保存的缓存，缺少缓存时为 `null`。 |
+| 按需看图 | `image_read` 默认返回尺寸、格式和文件大小。指定 `max_edge` 可返回预览，或用 `crop: { x, y, width, height }` 查看局部。坐标从 0 开始，按应用 EXIF 方向后的原图像素计算。裁剪预览默认长边上限为 768 像素。 |
+
+Office 默认每次返回最多 8,000 字节的内部 JSON。后续使用返回的 `next_offset` 作为 `offset`，并沿用原范围和字节预算。长记录可按 `part` 拼接 `record_json`，到 `last: true` 再解析。旧版 XLS、PPT 需要 LibreOffice（`soffice`），转换在临时副本上执行。转换可能规范化公式语法、重新计算缓存值。检查版式、图表和嵌入图片时使用视觉渲染。
+
 ## 从旧版升级
 
 旧脚本中的 `codex-context-stats` 要替换为 `omp-context-stats`。手写 MCP 配置应指向 `omp-toolkit-mcp`，Windows 上是 `omp-toolkit-mcp.exe`。新版安装包已移除旧的 `omp-codex-mcp` 别名。生成的配置可用来核对启动路径和参数。

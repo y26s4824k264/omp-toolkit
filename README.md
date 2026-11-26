@@ -135,6 +135,19 @@ Use `--help` on the command or subcommand for parameters. The MCP client shows t
 
 In builds from current source, `ranked-find` honors the shared `info/exclude` of a linked Git worktree. Use that worktree as `--root` and narrow the root after a timeout. On macOS and Linux, send `SIGINT` or `SIGTERM` to the owning `run-log` command to clean up its foreground command's process family and keep the raw log. Use the host's job manager for persistent services.
 
+## Read Office files and images through MCP
+
+Both tools accept an absolute `root` directory and a relative `file` inside it.
+
+| Task | Additional MCP arguments |
+| --- | --- |
+| Read DOCX body text | Use `office_read` with inclusive, one-based `start` and `end` block numbers. Each paragraph or table row is one block. |
+| Read PowerPoint text and speaker notes | Use `office_read` with inclusive, one-based `start` and `end` slide numbers in presentation order. |
+| Inspect Excel | Omit `sheet` to list sheets. Supply `sheet` and an A1 `range`, such as `B4:E12`, to get populated cells with addresses, values and formulas. The value of a formula cell is its saved cache, or `null` if missing. |
+| Inspect an image | Call `image_read` for dimensions, format and file size. Add `max_edge` for a preview or `crop: { x, y, width, height }` for a region in zero-based, display-oriented source pixels. The default cropped preview edge is 768 pixels. |
+
+Office responses default to 8,000 bytes of inner JSON. Use `next_offset` as `offset` with the same selection and budget. For a long record, concatenate its `record_json` fragments in `part` order through `last: true`, then parse the assembled JSON. Legacy XLS and PPT require LibreOffice (`soffice`) and use temporary copies. Legacy conversions can normalize formula syntax and recalculate cached values. Use visual rendering to verify layout, charts and embedded images.
+
 ## Upgrade from earlier releases
 
 Use `omp-context-stats` in scripts that previously called `codex-context-stats`. Set hand-written MCP configurations to `omp-toolkit-mcp` or `omp-toolkit-mcp.exe` on Windows. The old `omp-codex-mcp` alias is absent from new installs. The generated configuration includes the correct executable path and arguments.

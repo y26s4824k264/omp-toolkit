@@ -20,7 +20,9 @@ use serde::Deserialize;
 use tempfile::NamedTempFile;
 use tokio::{process::Command, time::timeout};
 
+mod image_read;
 mod log_preview;
+mod office_read;
 mod service_ready;
 mod token_count;
 
@@ -236,6 +238,74 @@ impl OmpTools {
     }
 
     #[tool(
+        description = "Read Office content as bounded JSON. DOCX uses body blocks, PPT/PPTX use slide ranges, and XLS/XLSX use a sheet and A1 range with cell addresses, formulas and cached values.",
+        annotations(read_only_hint = true)
+    )]
+    async fn office_read(
+        &self,
+        Parameters(input): Parameters<office_read::Selection>,
+    ) -> CallToolResult {
+        let result = async {
+            let mut path = project_file(&input.root, &input.file)?;
+            let source = office_read::extension(&path);
+            let target = match source.as_str() {
+                "ppt" => Some("pptx"),
+                "xls" => Some("xlsx"),
+                _ => None,
+            };
+            let converted = if let Some(target) = target {
+                let temp =
+                    tempfile::tempdir().context("create legacy Office conversion directory")?;
+                let (command, result) =
+                    office_read::legacy_conversion(&path, &source, target, temp.path())?;
+                let output = checked(
+                    capture(command, ".txt")
+                        .await
+                        .context("convert legacy Office file with LibreOffice (soffice)")?,
+                )?;
+                ensure!(
+                    result.is_file(),
+                    "LibreOffice did not export {target}: {}",
+                    preview_text(&output.stderr)?
+                );
+                path = result;
+                Some(temp)
+            } else {
+                None
+            };
+            tokio::task::spawn_blocking(move || {
+                let _keep_conversion = converted;
+                office_read::read(&path, input, &source)
+            })
+            .await
+            .context("join Office reader")?
+        }
+        .await;
+        tool_result(result)
+    }
+
+    #[tool(
+        description = "Inspect raster image dimensions without sending pixels. Supply crop in displayed pixel coordinates or max_edge for one bounded visual preview.",
+        annotations(read_only_hint = true)
+    )]
+    async fn image_read(
+        &self,
+        Parameters(input): Parameters<image_read::Selection>,
+    ) -> CallToolResult {
+        let result = async {
+            let path = project_file(&input.root, &input.file)?;
+            tokio::task::spawn_blocking(move || image_read::read(&path, input))
+                .await
+                .context("join image reader")?
+        }
+        .await;
+        match result {
+            Ok(content) => CallToolResult::success(content),
+            Err(error) => tool_result(Err(error)),
+        }
+    }
+
+    #[tool(
         description = "Parse Bash source to a syntax tree with obash without executing the script.",
         annotations(read_only_hint = true)
     )]
@@ -371,7 +441,7 @@ impl ServerHandler for OmpTools {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("omp-toolkit-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Use the saved full patch from preview tools. Inspect it and run git apply --check in the project before applying it.",
+                "Inspect saved preview patches and run git apply --check before applying. Use office_read for Office text and cell ranges, and image_read for image metadata or a region preview.",
             )
     }
 }
@@ -496,7 +566,10 @@ fn tool_result(result: Result<String>) -> CallToolResult {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    ensure!(cli.bin_dir.is_absolute(), "supply an absolute tool directory");
+    ensure!(
+        cli.bin_dir.is_absolute(),
+        "supply an absolute tool directory"
+    );
     ensure!(
         cli.node.as_ref().is_none_or(|path| path.is_absolute())
             && cli
