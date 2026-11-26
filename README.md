@@ -152,6 +152,8 @@ Use `media_read` when several ranges or crops are already known. Pass an `items`
 
 Codex sessions that expose Code Mode can call a known OMP reader inside one `exec` call and avoid a separate model tool-search request. The installer instructions include the arguments for an Office range or an image crop. For a crop call `tools.mcp__omp__image_read({root,file,crop:{x,y,width,height}})` and pass its image block to `image(block)`. To try experimental Code Mode from the CLI, save the [media profile](codex/omp-media.config.toml) as `~/.codex/omp-media.config.toml` and launch `codex --profile omp-media`. The profile enables Code Mode alongside ordinary tools and uses the existing `omp` MCP registration. [Codex profiles](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles)
 
+Use OMP when image metadata or a known crop is enough. Open the original in Codex for full-image or detailed review, and reuse images already in context when they suffice. For generation and editing, use Codex's built-in `imagegen` with the user's brief and original references, leaving unspecified creative choices to the generator.
+
 ## Upgrade from earlier releases
 
 Use `omp-context-stats` in scripts that previously called `codex-context-stats`. Set hand-written MCP configurations to `omp-toolkit-mcp` or `omp-toolkit-mcp.exe` on Windows. The old `omp-codex-mcp` alias is absent from new installs. The generated configuration includes the correct executable path and arguments.

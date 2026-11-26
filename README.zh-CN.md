@@ -152,6 +152,8 @@ Office 默认每次返回最多 8,000 字节的内部 JSON。后续使用返回�
 
 已有 Code Mode 的 Codex 会话可以在一个 `exec` 调用里直接使用已知的 OMP 读取工具，省去一次独立的模型工具搜索请求。安装指引提供了 Office 范围和图像裁剪的参数。已知图片路径和区域时，可调用 `tools.mcp__omp__image_read({root,file,crop:{x,y,width,height}})`，并用 `image(block)` 回传图像块。要在 CLI 里试用实验性 Code Mode，把[读取配置档](codex/omp-media.config.toml)保存为 `~/.codex/omp-media.config.toml`，用 `codex --profile omp-media` 启动。配置档允许 Code Mode 和常规工具并用，并沿用已有的 `omp` MCP 注册。 [Codex 配置档](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles)
 
+只需要图像信息或已知局部时，用 OMP 读取。看整图、核对细节时，在 Codex 对话中直接看原图。已有图像足够判断时直接复用。生成或编辑图片用 Codex 内置 `imagegen`，传达用户的要求并提供原始参考图，其余创作选择交给生图工具。
+
 ## 从旧版升级
 
 旧脚本中的 `codex-context-stats` 要替换为 `omp-context-stats`。手写 MCP 配置应指向 `omp-toolkit-mcp`，Windows 上是 `omp-toolkit-mcp.exe`。新版安装包已移除旧的 `omp-codex-mcp` 别名。生成的配置可用来核对启动路径和参数。
