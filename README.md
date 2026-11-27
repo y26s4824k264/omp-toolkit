@@ -2,164 +2,137 @@
 
 English · [简体中文](README.zh-CN.md)
 
-Use Oh My Pi's code inspection, patch previews, shell tools, LSP diagnostics, and debugging from WorkBuddy, Codex, Claude, or your terminal. The toolkit runs locally and needs no Oh My Pi installation or model account of its own.
+A lean, single-binary Rust extraction of [Oh My Pi](https://github.com/can1357/oh-my-pi)'s highest-value code intelligence engines — natively supporting **Windows**, **macOS**, and **Linux** (`x64` & `arm64`), and plugging cleanly into **Antigravity (AGY)**, **ChatGPT Desktop / Codex**, **WorkBuddy**, **CodeBuddy**, **Trae**, **Qoder**, **Tongyi Lingma**, **Claude Code**, **Cursor**, **VS Code / GitHub Copilot**, **Claude Desktop**, **Windsurf**, **Kiro**, **Cline**, **Roo Code**, **Zed**, and any stdio MCP client.
 
-## Install v0.4.0
+- **Cross-platform single ~20 MB binary**: macOS (`arm64`/`x64`), Linux (`x64`/`arm64`), and Windows (`x64`/`arm64`) — no Node.js runtime, no 94 MB embedded bash, no forced npm language-server installs.
+- **In-process MCP & CLI**: zero subprocess forking inside MCP, zero `/tmp` patch leaks.
+- **Non-intrusive by design**: never edits your global `CLAUDE.md`, `AGENTS.md`, or `GEMINI.md`; never competes with your agent's native `Edit` or `Bash`; structural rewrites and conflict resolutions default to dry-run unified diff preview (`apply: false`).
+- **Built-in one-click setup & rollback**: `omp-toolkit setup` configures or cleanly removes integrations across 17 supported international & Chinese AI clients.
 
-The installer verifies the binary archive against its SHA-256 checksum. It reuses compatible Node.js and npm on `PATH` or downloads verified upstream copies. Common language servers install by default. Install Git for patch validation, patch application, and LSP rename previews. [Release and checksums](https://github.com/y26s4824k264/omp-toolkit/releases/tag/v0.4.0)
+---
 
-**macOS and Linux**
+## Core Capabilities (8 Orthogonal MCP Tools)
 
-```sh
-curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.4.0/install.sh && bash install.sh --version v0.4.0
-```
-
-**Windows PowerShell 5.1 or later**
-
-```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.4.0/install.ps1 -OutFile install.ps1; if ($?) { & .\install.ps1 -Version v0.4.0 }
-```
-
-The default directories are `$HOME/.local/omp-toolkit` and `%LOCALAPPDATA%\OMP Toolkit`. Use `--prefix DIR` or `-Prefix DIR` for a custom location. Use `--without-lsp-servers` or `-WithoutLspServers` to skip the common language servers. Follow the installer output to add `bin` to `PATH`, then run `omp-refactor --version` and `omp-toolkit-mcp --version`.
-
-For an install that leaves client settings untouched, run the downloaded script with `none`.
-
-```sh
-bash install.sh --version v0.4.0 --client none
-```
-
-```powershell
-& .\install.ps1 -Version v0.4.0 -Client none
-```
-
-| Platform | Architectures | Requirements |
+| Tool | Read / Write | What it extracts from Oh My Pi (`v19.1.0`) |
 | --- | --- | --- |
-| macOS | x64, arm64 | macOS 15+ |
-| Linux | x64, arm64 | glibc distribution, such as Ubuntu 22.04+ |
-| Windows | x64, arm64 | PowerShell 5.1+ |
+| `code_summary` | Read-only | Tree-sitter AST-folded reading with progressive BFS unfolding (`unfold_until_lines`) **and** syntactic block expansion (`block_line`, including Rust `#[...]`/`///` doc comments & Python/TS/Java decorators) — cuts large-file read tokens by 60–80% while keeping exact line anchors. |
+| `code_outline` | Read-only | Instant tree-sitter symbol map (functions, structs, classes, interfaces, methods & exact line ranges) with zero LSP startup cost. |
+| `ast_grep` | Read-only | Full-repository parallel AST search (`omp-ast` + `omp-xfs`) with `.gitignore`/worktree awareness, globs, automatic per-file language detection, multi-pattern captures, and pagination. |
+| `ast_edit` | Dry-run default | Full-repository parallel AST structural rewrites with mandatory post-rewrite tree-sitter syntax checks. Previews unified diff (`apply: false`) or writes atomically (`apply: true`). |
+| `lsp` | Persistent pool | Cross-platform warm LSP pool (auto-syncs external edits made by your host agent). Bundles OMP's 55-server `defaults.json` (+ `.omp/lsp.json` overrides). Supports `status`, `diagnostics`, `definition`, `references`, `hover`, `type_definition`, `implementation`, `symbols`, `workspace_symbols`, `code_actions`, `rename`, and `rename_file` (`workspace/willRenameFiles`). |
+| `debug` | Persistent sessions | Cross-platform multi-session DAP debugger using OMP's 14-adapter `defaults.json` (both stdio & TCP socket adapters like `dlv`/`codelldb`). Supports `launch`, `attach`, conditional breakpoints, stepping, `threads`, `stack_trace`, `scopes`, `variables`, `evaluate`, `output`, and `terminate`. |
+| `minimize_output` | Read-only | Standalone extraction of OMP's command-aware output minimizer (20+ Rust filters + 67 TOML pipelines for `cargo`, `git`, `pytest`, `jest`, `tsc`, `go`, `docker`, `gradle`, etc.) — works on non-zero exit codes without bundling bash. |
+| `git_conflicts` | Dry-run default | Inspired by OMP's `conflict://` workflow: parallel full-repo scan for 2-way & diff3 3-way Git conflict markers, plus structured batch resolution (`ours`, `theirs`, `base`, `both`, `both_reverse`, `delete`, or `custom` with `@ours`/`@theirs`/`@base`/`@both` tokens), CRLF-safe, diff preview by default. |
 
-## Connect an agent
+---
 
-By default, the installer detects Codex and Claude Code CLIs on `PATH` and registers the local stdio server as `omp`. Use `--client codex` or `--client claude` to select one on macOS/Linux, or `-Client codex` or `-Client claude` on Windows. An existing `omp` entry that points elsewhere is preserved. When a client points to this installation, the installer adds a marked block of usage guidance to that client's global instructions.
+## Supported AI Coding Software (17 Targets)
 
-For manual setup, the install directory contains `mcp-config.json`, `vscode-mcp.json`, and `AGENT-INSTRUCTIONS.md`. Merge the generated `omp` entry into the client's existing server list. The command and arguments already use absolute paths to this install.
+| Software | One-Click Command | Integration Method |
+| --- | --- | --- |
+| **Google Antigravity (AGY)** | `./install.sh --client antigravity` | Native toggleable plugin at `~/.gemini/config/plugins/omp-toolkit/` (`plugin.json` + `mcp_config.json` + progressive `SKILL.md`) |
+| **Antigravity (MCP only)** | `./install.sh --client antigravity-mcp` | Global `~/.gemini/config/mcp_config.json` |
+| **WorkBuddy (Tencent)** | `./install.sh --client workbuddy` | `~/.workbuddy-ai/mcp.json` (or shared `~/.codebuddy/.mcp.json`) with `type: stdio`; also `--print workbuddy` for UI Connectors |
+| **CodeBuddy (Tencent)** | `./install.sh --client codebuddy` | `~/.codebuddy/.mcp.json` (`mcpServers.omp`, `type: stdio`) |
+| **Trae / Trae CN (ByteDance)** | `./install.sh --client trae` | `~/.trae/mcp.json` (or `~/.trae-cn/mcp.json`) |
+| **Qoder (Alibaba Cloud)** | `./install.sh --client qoder` | Merges `mcpServers.omp` into `~/.qoder/settings.json` (preserves all other settings) |
+| **Tongyi Lingma (Alibaba)** | `omp-toolkit setup --print lingma` | Prints `mcpServers` JSON for IDE sidebar **Personal Settings → MCP → Manual** |
+| **Claude Code** | `./install.sh --client claude-code` | `claude mcp add --scope user --transport stdio omp -- <bin> mcp` |
+| **ChatGPT Desktop / Codex** | `./install.sh --client codex` *(or `chatgpt`)* | Comment-preserving atomic TOML update of `[mcp_servers.omp]` in `~/.codex/config.toml` (works even without `codex` on PATH) |
+| **Cursor** | `./install.sh --client cursor` | `~/.cursor/mcp.json` (`mcpServers.omp`) |
+| **VS Code / GitHub Copilot** | `./install.sh --client vscode` | User `Code/User/mcp.json` (`servers.omp`) |
+| **Claude Desktop** | `./install.sh --client claude-desktop` | `claude_desktop_config.json` (`mcpServers.omp`) |
+| **Windsurf** | `./install.sh --client windsurf` | `~/.codeium/windsurf/mcp_config.json` (`mcpServers.omp`) |
+| **Kiro (AWS)** | `./install.sh --client kiro` | `~/.kiro/settings/mcp.json` (`mcpServers.omp`) |
+| **Cline (VS Code)** | `./install.sh --client cline` | `globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
+| **Roo Code (VS Code)** | `./install.sh --client roo-code` | `globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json` |
+| **Zed** | `omp-toolkit setup --print zed` | Prints `context_servers.omp` JSONC snippet |
 
-| Client | Setup and verification |
-| --- | --- |
-| Codex | Run `codex mcp list` to check registration. [Docs](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) |
-| Claude Code | Run `claude mcp get omp` to check registration. [Docs](https://code.claude.com/docs/en/mcp#option-3-add-a-local-stdio-server) |
-| WorkBuddy | In **Connectors → Custom connector → Add MCP**, merge `mcpServers.omp` into `mcp.json`. Confirm trust in WorkBuddy if prompted. [Docs](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Connector) |
-| Claude Desktop | In **Developer → Edit Config**, merge `mcpServers.omp`, then restart the app. [Docs and config paths](https://modelcontextprotocol.io/docs/develop/connect-local-servers) |
-| Other stdio clients | Use the generated `command` and `args`. Cursor and current Copilot use `mcpServers.omp`. For Copilot add `"tools": ["*"]` to the entry. VS Code editor-managed config uses `servers.omp`. [Cursor](https://prod.cursor.com/help/customization/mcp) · [VS Code and Copilot](https://code.visualstudio.com/docs/agents/reference/mcp-configuration) |
+> Full client paths, GUI `PATH` handling, and rollback instructions: [docs/clients.md](docs/clients.md)
 
-Open a new session and ask the agent to run `ast_find` on a test project. In Codex, the tools use the `mcp__omp__` prefix. A remote session needs access to the machine or environment where the toolkit is installed.
+---
 
-## Inspect and preview changes
+## Quick Start
 
-Run the examples from a Git project root. The edit examples assume `src/a.ts` contains `oldCall(7)` on line 1. Use `--root` to select another project. For MCP calls, `root` must be absolute and file fields are project-relative.
+Requires Rust (the pinned nightly in [rust-toolchain.toml](rust-toolchain.toml) is needed by upstream `xutf`'s `portable_simd`).
 
-**AST** matches syntax and can preview the same rewrite across files.
-
-```sh
-omp-refactor ast-find --lang typescript --pattern 'oldCall($VALUE)' src/a.ts
-omp-refactor ast --lang typescript --pattern 'oldCall($VALUE)' --rewrite 'newCall($VALUE)' src/a.ts > ast.patch
-git apply --check -- ast.patch
-```
-
-**Hashline** checks a patch against the current file tag. Use `omp-refactor read-summary` to locate code and `omp-refactor read` to get fresh line anchors. **Sloppy** uses text anchors or syntax-aware block operations. Supply every file named in the edit. [Sloppy syntax](https://github.com/can1357/oh-my-pi/blob/v19.1.0/crates/edit/prompts/sloppy.md)
-
-```sh
-printf '%s\n' '*** Edit File: src/a.ts' '*** Find' 'oldCall(7)' '*** Replace' 'newCall(7)' > change.edit
-omp-refactor sloppy --patch change.edit src/a.ts > sloppy.patch
-git apply --check -- sloppy.patch
-```
-
-**Magic** turns a description into a plan for your coding agent. Prepare with a `# relative/path` heading per file. Give the agent `systemPrompt` and each file's `request` from the plan. These may contain project source. Save the returned line operations in `replies.json`, then run `preview` to validate them against the original snapshot. Use `prepare --full` if an excerpt omits necessary context. [Magic sources](magic/UPSTREAM.md)
-
-```sh
-printf '%s\n' '# src/a.ts' '- Replace oldCall with newCall on line 1.' > changes.md
-omp-magic prepare --root . --instructions changes.md > plan.json
-```
-
-```json
-{"replies":[{"path":"src/a.ts","operations":"[\"sub\",1,\"oldCall\",\"newCall\"]"}]}
-```
+### Build & install binary only
 
 ```sh
-omp-magic preview --root . --plan plan.json --replies replies.json > magic.patch
-git apply --check -- magic.patch
+./install.sh
+# Binary installed to ~/.local/bin/omp-toolkit
 ```
 
-The previews leave source files untouched. Inspect the complete diff and apply it with `git apply -- PATH.patch` when satisfied. Prepare a new preview if the source changes.
-
-Builds from current source support multiline `sub` replacements and report likely syntax-breaking operations when the edited file fails to parse. Review the indicated operations and rerun the preview.
-
-## Save project lessons and skill drafts
-
-Use `--root` to choose which project owns the records. `save` deduplicates lessons, `list` reads them, and `skill preview` prints a draft. `create` saves a new `SKILL.md` under `.omp-toolkit/learning/skills/`. `update` intentionally replaces a draft you already created. Review drafts before installing them in a client.
+### Inspect detected AI clients & preview changes (no disk writes)
 
 ```sh
-omp-refactor --root . learn save 'Check the complete Git patch before applying it.'
-omp-refactor --root . learn list
-printf '%s\n' 'Review the diff, then run git apply --check.' > patch-review.md
-omp-refactor --root . learn skill preview patch-review --description 'Review a Git patch' --body-file patch-review.md
-omp-refactor --root . learn skill create patch-review --description 'Review a Git patch' --body-file patch-review.md
-omp-refactor --root . learn skill update patch-review --description 'Review a Git patch' --body-file patch-review.md
+omp-toolkit setup --client list
+omp-toolkit setup --client auto --dry-run
 ```
 
-## Track a long-running goal
-
-`omp-refactor goal` stores a goal ID, its objective and acceptance criteria, and a separate current milestone in `.omp-toolkit/goals/`. Use the same project root and ID to resume it. Hosts like Codex can keep their native goal active while the project record tracks milestone and evidence details. The structure follows Oh My Pi's separate goal and todo state. [Oh My Pi goal continuation](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-continuation.md) · [Todo state](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-todo-context.md)
+### One-click build, install & connect
 
 ```sh
-omp-refactor --root . goal init release --objective 'Publish and verify the update' --criterion 'Platform tests pass' --criterion 'Public installation works'
-omp-refactor --root . goal focus release 'Run the platform tests'
-omp-refactor --root . goal record release 1 'CI run 123 passed the required platform jobs'
-omp-refactor --root . goal show release
+# macOS / Linux
+./install.sh --client antigravity
+./install.sh --client antigravity --client claude-code --client cursor
+./install.sh --client auto
 ```
 
-`goal list` shows saved IDs. `goal clear-evidence release 1` withdraws stale evidence. `ready_for_review` indicates every criterion has a recorded reference. Confirm that those references still prove the objective before closing the host goal.
+```powershell
+# Windows PowerShell
+.\install.ps1 -Client antigravity
+.\install.ps1 -Client auto -DryRun
+```
 
-## Other commands
+### Clean uninstall from any client
 
-| Workflow | Entry point |
-| --- | --- |
-| Locate files by search terms | `omp-refactor ranked-find "keywords" --limit 10` |
-| Run commands and retain complete logs | `omp-shell run-log -- COMMAND ARGS...`. Use `omp-shell minimize` for existing logs and `obash --json=native -c '…'` to parse Bash syntax. |
-| Check language servers | `omp-lsp catalog`, `omp-lsp status`, `omp-lsp check FILE...`, or `omp-lsp definition`. Diagnostics depend on the project's language server. Symbol and file rename previews require macOS. |
-| Debug with a persistent session | `omp-debug --session ABSOLUTE_DIR serve --root PROJECT`, then send `launch`, `break`, `continue`, or `stop` from another terminal. macOS and Linux require a suitable DAP adapter. Windows support currently excludes persistent DAP sessions. |
-| Measure recorded context usage | `omp-context-stats --turn 1 --requests ROLLOUT.jsonl` reads Codex rollout JSONL. |
-| Inspect local runtime behavior through MCP | `service_ready` checks a loopback port or new log lines. `profile_summary` reads V8 or macOS `sample` reports. `token_count` estimates file tokens offline. |
+```sh
+omp-toolkit setup --client antigravity --remove
+omp-toolkit setup --client cursor --remove
+```
 
-Use `--help` on the command or subcommand for parameters. The MCP client shows tool argument schemas.
+Install only the language servers or debug adapters you actually use on your `PATH` (e.g. `rust-analyzer`, `typescript-language-server`, `pyright`, `gopls`, `lldb-dap`, `dlv`, `debugpy`).
 
-In builds from current source, `ranked-find` honors the shared `info/exclude` of a linked Git worktree. Use that worktree as `--root` and narrow the root after a timeout. On macOS and Linux, send `SIGINT` or `SIGTERM` to the owning `run-log` command to clean up its foreground command's process family and keep the raw log. Use the host's job manager for persistent services.
+---
 
-## Read Office files and images through MCP
+## CLI Examples
 
-Both tools accept an absolute `root` directory and a relative `file` inside it.
+```sh
+# Fold a large source file to ~120 visible lines, or expand one full syntactic block
+omp-toolkit summary src/code_ast.rs --unfold-until 120
+omp-toolkit summary src/code_ast.rs --block-line 135
 
-| Task | Additional MCP arguments |
-| --- | --- |
-| Read DOCX body text | Use `office_read` with inclusive, one-based `start` and `end` block numbers. Each paragraph or table row is one block. |
-| Read PowerPoint text and speaker notes | Use `office_read` with inclusive, one-based `start` and `end` slide numbers in presentation order. |
-| Inspect Excel | Omit `sheet` to list sheets. Supply `sheet` and an A1 `range`, such as `B4:E12`, to get populated cells with addresses, values and formulas. The value of a formula cell is its saved cache, or `null` if missing. |
-| Inspect an image | Call `image_read` for dimensions, format and file size. Add `max_edge` for a preview or `crop: { x, y, width, height }` for a region in zero-based, display-oriented source pixels. The default cropped preview edge is 768 pixels. |
+# Instant tree-sitter symbol outline
+omp-toolkit outline src/mcp.rs --type function
 
-Office responses default to 8,000 bytes of inner JSON. Use `next_offset` as `offset` with the same selection and budget. For a long record, concatenate its `record_json` fragments in `part` order through `last: true`, then parse the assembled JSON. Legacy XLS and PPT require LibreOffice (`soffice`) and use temporary copies. Legacy conversions can normalize formula syntax and recalculate cached values. Use visual rendering to verify layout, charts and embedded images.
+# Repo-wide AST search (auto-detects languages, respects .gitignore)
+omp-toolkit ast-grep --pattern 'oldCall($$$ARGS)' --include 'src/**/*.ts'
 
-Use `media_read` when several ranges or crops are already known. Pass an `items` array with up to six selections. Each item takes the same arguments as the single reader plus `type: "office"` or `type: "image"`. The result identifies each item in input order and reports errors per item. A batch can return up to two image previews and 24,000 bytes of reader text. Reuse the results for follow-ups about those selections. The running MCP server keeps up to four legacy conversions and checks the source bytes on every read.
+# Repo-wide AST rewrite preview (add --apply to write atomically)
+omp-toolkit ast-edit --pattern 'oldCall($$$ARGS)' --rewrite 'newCall($$$ARGS)'
 
-Codex sessions that expose Code Mode can call a known OMP reader inside one `exec` call and avoid a separate model tool-search request. The installer instructions include the arguments for an Office range or an image crop. For a crop call `tools.mcp__omp__image_read({root,file,crop:{x,y,width,height}})` and pass its image block to `image(block)`. To try experimental Code Mode from the CLI, save the [media profile](codex/omp-media.config.toml) as `~/.codex/omp-media.config.toml` and launch `codex --profile omp-media`. The profile enables Code Mode alongside ordinary tools and uses the existing `omp` MCP registration. [Codex profiles](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles)
+# Scan & resolve Git merge conflicts (preview diff by default; add --apply to write)
+omp-toolkit conflicts scan
+omp-toolkit conflicts resolve src/app.rs --index 1 --choice ours
 
-Use OMP when image metadata or a known crop is enough. Open the original in Codex for full-image or detailed review, and reuse images already in context when they suffice. For generation and editing, use Codex's built-in `imagegen` with the user's brief and original references, leaving unspecified creative choices to the generator.
+# Check project LSP readiness & available DAP adapters
+omp-toolkit lsp status
+omp-toolkit debug-adapters
 
-## Upgrade from earlier releases
+# Condense noisy build or failing test output
+cargo test 2>&1 | omp-toolkit minimize --cmd "cargo test" --exit-code 101
+```
 
-Use `omp-context-stats` in scripts that previously called `codex-context-stats`. Set hand-written MCP configurations to `omp-toolkit-mcp` or `omp-toolkit-mcp.exe` on Windows. The old `omp-codex-mcp` alias is absent from new installs. The generated configuration includes the correct executable path and arguments.
+---
 
-## Source and licenses
+## Documentation
 
-To build from source on macOS or Linux, install Git, Rustup, system build tools, Node.js 24+, and npm if you want the common language servers. Then run `./scripts/install.sh --with-lsp-servers` from the checkout. Use the tagged release to match a specific version. [Source installer](scripts/install.sh) · [Release workflow](.github/workflows/release.yml)
+- [docs/clients.md](docs/clients.md) — Supported AI software, one-click setup, GUI `PATH` tips, and clean uninstall
+- [docs/tools.md](docs/tools.md) — Complete MCP tool schemas and CLI reference
+- [docs/architecture.md](docs/architecture.md) — Extraction philosophy, crate layout, and engineering decisions
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — Upstream Oh My Pi (`v19.1.0`) and RTK MIT license attributions
 
-This is an independently maintained MIT project. Base editing and LSP defaults come from Oh My Pi v19.0.0. Shell and `obash` build from Oh My Pi v19.1.0, which also supplies selected filesystem and editing fixes. Binary archives include dependency notices. The release page provides their checksums. [License](LICENSE) · [Third-party notices and exact upstream revisions](THIRD_PARTY_NOTICES.md)
+## License
+
+MIT — see [LICENSE](LICENSE).

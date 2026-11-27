@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test & Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+
+      - name: Verify Rust toolchain
+        run: rustup show
+
+      - name: Run workspace unit & integration tests
+        run: |
+          cargo test --locked -p omp-toolkit -p omp-minimizer -p omp-diff -p omp-xfs -p omp-vfs
+          cargo test --locked -p omp-ast --no-default-features
+
+      - name: Build release binary & smoke check
+        run: |
+          cargo build --locked --release --bin omp-toolkit
+          ext=""
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then ext=".exe"; fi
+          "./target/release/omp-toolkit${ext}" --version
+          "./target/release/omp-toolkit${ext}" setup --client list

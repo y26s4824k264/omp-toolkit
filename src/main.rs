@@ -1,272 +1,547 @@
 use std::{
-    fs,
-    io::{self, BufWriter, Write},
-    path::{Component, Path, PathBuf},
+    io::{self, Read},
+    path::PathBuf,
 };
 
-#[cfg(unix)]
-use std::{collections::HashSet, os::unix::fs::MetadataExt};
-
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-
-mod discovery;
-mod git_patch;
-mod goal;
-mod hashline;
-mod learn;
-mod magic_native;
-mod project_state;
-mod ranked_find;
-mod sloppy;
-mod structural;
-mod token_count;
+use omp_toolkit::{
+    code_ast::{self, AstEditInput, AstGrepInput, OutlineInput, RewriteRule, SummaryInput},
+    conflicts::{self, ConflictsInput},
+    dap::{self, DebugInput, session::DapManager},
+    lsp::{self, LspInput, pool::LspPool},
+    mcp,
+    minimize::{self, MinimizeInput},
+    setup::{self, Client, SetupOptions},
+};
 
 #[derive(Parser)]
 #[command(
+    name = "omp-toolkit",
     version,
-    about = "Inspect source and preview edits with OMP's native engines"
+    about = "Lean native MCP server & CLI extracting Oh My Pi's core code intelligence (AST, LSP, DAP, conflicts, output minimizer)"
 )]
 struct Cli {
-    /// Project root. File arguments and patch paths are relative to this directory.
-    #[arg(long, global = true, default_value = ".")]
-    root: PathBuf,
+    /// Project root directory (defaults to current working directory).
+    #[arg(long, global = true)]
+    root: Option<PathBuf>,
     #[command(subcommand)]
-    command: EditCommand,
+    command: Command,
 }
 
 #[derive(Subcommand)]
-enum EditCommand {
-    /// Read numbered source lines and their OMP Hashline tag.
-    Read {
+enum Command {
+    /// Start the persistent stdio MCP server (recommended for coding agents).
+    Mcp,
+    /// Fold a source file into an AST-aware structural summary, or expand a single syntactic block.
+    Summary {
         file: PathBuf,
-        #[arg(long, default_value_t = 1)]
-        start: usize,
         #[arg(long)]
-        end: Option<usize>,
+        lang: Option<String>,
+        /// Expand the full syntactic block at this 1-based line (including attributes/decorators).
+        #[arg(long)]
+        block_line: Option<u32>,
+        #[arg(long)]
+        unfold_until: Option<u32>,
+        #[arg(long)]
+        unfold_limit: Option<u32>,
+        #[arg(long)]
+        json: bool,
     },
-    /// Preview a Hashline patch for the listed files without modifying them.
-    Hashline {
+    /// List top-level symbols and members of a source file using tree-sitter.
+    Outline {
+        file: PathBuf,
         #[arg(long)]
-        patch: PathBuf,
-        #[arg(required = true)]
-        files: Vec<PathBuf>,
+        lang: Option<String>,
+        #[arg(long = "type")]
+        types: Vec<String>,
+        #[arg(long)]
+        include_imports: bool,
     },
-    /// Preview anchored Find/Replace or AST block commands for the listed files.
-    Sloppy {
+    /// Full-repository parallel AST structural search.
+    AstGrep {
+        /// AST pattern(s) to match.
+        #[arg(long = "pattern", required = true)]
+        patterns: Vec<String>,
+        /// Optional subdirectory or file inside `--root`.
         #[arg(long)]
-        patch: PathBuf,
-        #[arg(required = true)]
-        files: Vec<PathBuf>,
+        path: Option<PathBuf>,
+        #[arg(long)]
+        lang: Option<String>,
+        #[arg(long)]
+        selector: Option<String>,
+        #[arg(long)]
+        include: Option<String>,
+        #[arg(long = "exclude")]
+        exclude: Vec<String>,
+        #[arg(long)]
+        strictness: Option<String>,
+        #[arg(long)]
+        hidden: bool,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
     },
-    /// Preview one structural rewrite for the listed files without modifying them.
-    Ast {
-        #[arg(long)]
-        lang: String,
+    /// Full-repository parallel AST structural rewrite (preview diff by default; pass `--apply` to write).
+    AstEdit {
         #[arg(long)]
         pattern: String,
         #[arg(long)]
         rewrite: String,
-        #[arg(required = true)]
-        files: Vec<PathBuf>,
+        #[arg(long)]
+        path: Option<PathBuf>,
+        #[arg(long)]
+        lang: Option<String>,
+        #[arg(long)]
+        selector: Option<String>,
+        #[arg(long)]
+        include: Option<String>,
+        #[arg(long = "exclude")]
+        exclude: Vec<String>,
+        #[arg(long)]
+        strictness: Option<String>,
+        #[arg(long)]
+        skip_overlaps: bool,
+        #[arg(long)]
+        apply: bool,
     },
-    /// Find AST matches, with source positions and captures.
-    AstFind {
+    /// Run a single LSP action (for warm reuse across turns, use `omp-toolkit mcp`).
+    Lsp {
+        action: String,
+        file: Option<PathBuf>,
         #[arg(long)]
-        lang: String,
+        line: Option<u32>,
         #[arg(long)]
-        pattern: String,
+        column: Option<u32>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long)]
+        new_name: Option<String>,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Inspect available DAP debug adapters (live multi-step sessions run over `omp-toolkit mcp`).
+    DebugAdapters,
+    /// Compress noisy CLI output from stdin or a file using OMP's command-aware minimizer.
+    Minimize {
+        /// Original command line (e.g. "cargo test", "git diff", "pytest").
+        #[arg(long = "cmd")]
+        command: String,
         #[arg(long, default_value_t = 0)]
-        offset: usize,
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
-        #[arg(required = true)]
-        files: Vec<PathBuf>,
+        exit_code: i32,
+        /// Optional log file inside `--root`; reads stdin when omitted.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        #[arg(long, default_value_t = 0)]
+        min_chars: usize,
+        #[arg(long)]
+        json: bool,
     },
-    /// Read a source summary with original line ranges.
-    ReadSummary { file: PathBuf },
-    /// Count tokens offline for a UTF-8 file, absolute or relative to the root.
-    TokenCount { file: PathBuf },
-    /// Rank files by the query terms they contain and show matching lines.
-    RankedFind {
-        query: String,
-        #[arg(long, default_value_t = 12)]
-        limit: usize,
+    /// Scan or resolve Git merge conflicts across a file or repository.
+    Conflicts {
+        /// `scan` or `resolve`.
+        action: String,
+        /// Optional file or subdirectory inside `--root` (required file for `resolve`).
+        file: Option<PathBuf>,
+        /// Optional include glob when scanning.
+        #[arg(long)]
+        include: Option<String>,
+        /// Optional exclude glob(s) when scanning.
+        #[arg(long = "exclude")]
+        exclude: Vec<String>,
+        /// 1-based conflict index to resolve.
+        #[arg(long)]
+        index: Option<usize>,
+        /// Apply `--choice` to all conflict blocks in `file`.
+        #[arg(long)]
+        all: bool,
+        /// Resolution strategy: ours | theirs | base | both | both_reverse | delete | custom.
+        #[arg(long)]
+        choice: Option<String>,
+        /// Replacement text when `--choice custom` (supports @ours/@theirs/@base/@both lines).
+        #[arg(long)]
+        custom_text: Option<String>,
+        /// Write resolved file atomically (defaults to unified diff preview).
+        #[arg(long)]
+        apply: bool,
     },
-    /// Save reusable project lessons and prepare portable skill drafts.
-    Learn {
-        #[command(subcommand)]
-        command: learn::Command,
+    /// List supported built-in AST languages.
+    Languages,
+    /// Detect, configure, preview, or remove integrations for supported AI coding clients.
+    Setup {
+        /// Client(s) to configure: `auto`, `list`, `antigravity`, `antigravity-mcp`,
+        /// `claude-code`, `codex`, `cursor`, `vscode`, `claude-desktop`, `windsurf`, `zed`,
+        /// `workbuddy`, `codebuddy`, `trae`, `qoder`, `lingma`, `kiro`, `cline`, `roo-code`.
+        #[arg(long = "client", default_value = "list")]
+        clients: Vec<String>,
+        /// Print ready-to-paste config snippet for one client without modifying disk.
+        #[arg(long)]
+        print: Option<String>,
+        /// Copy this binary into a stable bin directory (e.g. ~/.local/bin) before registering.
+        #[arg(long)]
+        install_bin: Option<PathBuf>,
+        /// Remove the `omp` integration from the selected client(s).
+        #[arg(long)]
+        remove: bool,
+        /// Preview actions without modifying any files or invoking external CLIs.
+        #[arg(long)]
+        dry_run: bool,
+        /// Replace an existing `omp` entry even if it points to another binary.
+        #[arg(long)]
+        force: bool,
+        /// Omit embedding current PATH into GUI MCP config `env.PATH`.
+        #[arg(long)]
+        no_path_env: bool,
+        /// Override home directory (advanced / testing).
+        #[arg(long, hide = true)]
+        home: Option<PathBuf>,
+        /// Output machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
-    /// Track a project goal, its current milestone, and acceptance evidence.
-    Goal {
-        #[command(subcommand)]
-        command: goal::Command,
-    },
-    #[command(hide = true)]
-    EditSnapshot {
-        #[arg(required = true)]
-        files: Vec<PathBuf>,
-    },
-    #[command(hide = true)]
-    EditSnapshotPreview,
-    #[command(hide = true)]
-    EditSnapshotParse { file: PathBuf },
 }
 
-pub(crate) struct Change {
-    path: PathBuf,
-    before: String,
-    after: String,
-}
-
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let root = cli.root.canonicalize().context("resolve project root")?;
-    ensure!(root.is_dir(), "project root must be a directory");
-    let changes = match cli.command {
-        EditCommand::Read { file, start, end } => return hashline::read(&root, &file, start, end),
-        EditCommand::Hashline { patch, files } => {
-            let patch = fs::read_to_string(&patch)
-                .with_context(|| format!("read patch {}", patch.display()))?;
-            hashline::preview(&root, &patch, &files)?
+    let root = match cli.root {
+        Some(r) => r,
+        None => std::env::current_dir().context("resolve current directory")?,
+    };
+
+    match cli.command {
+        Command::Mcp => mcp::serve_stdio().await,
+        Command::Languages => {
+            println!("{}", code_ast::supported_languages());
+            Ok(())
         }
-        EditCommand::Sloppy { patch, files } => {
-            let patch = fs::read_to_string(&patch)
-                .with_context(|| format!("read patch {}", patch.display()))?;
-            sloppy::preview(&root, &patch, &files)?
+        Command::Setup {
+            clients,
+            print,
+            install_bin,
+            remove,
+            dry_run,
+            force,
+            no_path_env,
+            home,
+            json,
+        } => {
+            let current_exe = std::env::current_exe()
+                .context("resolve current executable")?
+                .canonicalize()
+                .unwrap_or_else(|_| std::env::current_exe().unwrap());
+            let binary = match install_bin {
+                Some(dir) => setup::install_binary(&current_exe, &dir, dry_run)?,
+                None => current_exe,
+            };
+            let opts = SetupOptions {
+                binary,
+                home: home.clone(),
+                path_env: None,
+                dry_run,
+                force,
+                include_path_env: !no_path_env,
+            };
+
+            if let Some(target) = print {
+                let c = Client::parse(&target)?;
+                println!("{}", setup::render_snippet(c, &opts)?);
+                return Ok(());
+            }
+
+            if clients.len() == 1 && clients[0].eq_ignore_ascii_case("list") {
+                let detected = setup::detect_clients(home.as_deref())?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&detected)?);
+                } else {
+                    println!("{:<18} {:<10} {}", "CLIENT", "DETECTED", "TARGET");
+                    for row in detected {
+                        println!(
+                            "{:<18} {:<10} {}",
+                            row.client,
+                            if row.detected { "yes" } else { "no" },
+                            row.target
+                        );
+                    }
+                    println!("\nRun `omp-toolkit setup --client auto --dry-run` to preview, or `--client antigravity` to configure one.");
+                }
+                return Ok(());
+            }
+
+            let mut resolved = Vec::new();
+            for raw in &clients {
+                if raw.eq_ignore_ascii_case("auto") {
+                    for c in setup::resolve_auto_clients(home.as_deref())? {
+                        if !resolved.contains(&c) {
+                            resolved.push(c);
+                        }
+                    }
+                } else {
+                    let c = Client::parse(raw)?;
+                    if !resolved.contains(&c) {
+                        resolved.push(c);
+                    }
+                }
+            }
+
+            if resolved.is_empty() {
+                if json {
+                    println!("[]");
+                } else {
+                    println!("No supported clients auto-detected. Specify `--client <name>` or `--print <name>` (see `omp-toolkit setup --client list`).");
+                }
+                return Ok(());
+            }
+
+            let reports = if remove {
+                setup::remove_clients(&resolved, &opts)?
+            } else {
+                setup::apply_clients(&resolved, &opts)?
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&reports)?);
+            } else {
+                for r in reports {
+                    println!("[{}] {} -> {}\n    {}", r.status, r.display_name, r.target, r.message);
+                }
+            }
+            Ok(())
         }
-        EditCommand::Ast {
+        Command::Summary {
+            file,
             lang,
-            pattern,
-            rewrite,
-            files,
-        } => structural::preview(&root, &lang, pattern, rewrite, &files)?,
-        EditCommand::AstFind {
+            block_line,
+            unfold_until,
+            unfold_limit,
+            json,
+        } => {
+            let out = code_ast::code_summary(SummaryInput {
+                root,
+                file,
+                lang,
+                block_line,
+                unfold_until_lines: unfold_until,
+                unfold_limit_lines: unfold_limit,
+                min_body_lines: None,
+                min_comment_lines: None,
+                compact: Some(!json),
+            })?;
+            print!("{out}");
+            Ok(())
+        }
+        Command::Conflicts {
+            action,
+            file,
+            include,
+            exclude,
+            index,
+            all,
+            choice,
+            custom_text,
+            apply,
+        } => {
+            let val = conflicts::execute(ConflictsInput {
+                action,
+                root,
+                file,
+                include,
+                exclude: (!exclude.is_empty()).then_some(exclude),
+                hidden: None,
+                max_conflicts: None,
+                index,
+                all: Some(all),
+                choice,
+                custom_text,
+                resolutions: None,
+                apply: Some(apply),
+            })
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&val)?);
+            Ok(())
+        }
+        Command::Outline {
+            file,
             lang,
-            pattern,
+            types,
+            include_imports,
+        } => {
+            let val = code_ast::code_outline(OutlineInput {
+                root,
+                file,
+                lang,
+                types: (!types.is_empty()).then_some(types),
+                include_imports: Some(include_imports),
+            })?;
+            println!("{}", serde_json::to_string_pretty(&val)?);
+            Ok(())
+        }
+        Command::AstGrep {
+            patterns,
+            path,
+            lang,
+            selector,
+            include,
+            exclude,
+            strictness,
+            hidden,
             offset,
             limit,
-            files,
         } => {
-            return discovery::ast_find(&root, &lang, &pattern, &files, offset, limit);
+            let val = code_ast::ast_grep(AstGrepInput {
+                root,
+                path,
+                patterns,
+                lang,
+                selector,
+                include,
+                exclude: (!exclude.is_empty()).then_some(exclude),
+                strictness,
+                hidden: Some(hidden),
+                offset: Some(offset),
+                limit: Some(limit),
+            })
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&val)?);
+            Ok(())
         }
-        EditCommand::ReadSummary { file } => return discovery::read_summary(&root, &file),
-        EditCommand::RankedFind { query, limit } => {
-            return ranked_find::ranked_find(&root, &query, limit);
+        Command::AstEdit {
+            pattern,
+            rewrite,
+            path,
+            lang,
+            selector,
+            include,
+            exclude,
+            strictness,
+            skip_overlaps,
+            apply,
+        } => {
+            let val = code_ast::ast_edit(AstEditInput {
+                root,
+                path,
+                rules: vec![RewriteRule { pattern, rewrite }],
+                lang,
+                selector,
+                include,
+                exclude: (!exclude.is_empty()).then_some(exclude),
+                strictness,
+                skip_overlaps: Some(skip_overlaps),
+                max_replacements: None,
+                max_files: None,
+                apply: Some(apply),
+            })
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&val)?);
+            Ok(())
         }
-        EditCommand::Learn { command } => return learn::run(&root, command),
-        EditCommand::Goal { command } => return goal::run(&root, command),
-        EditCommand::EditSnapshot { files } => return magic_native::snapshot(&root, &files),
-        EditCommand::EditSnapshotPreview => magic_native::preview(&root, io::stdin().lock())?,
-        EditCommand::EditSnapshotParse { file } => {
-            return magic_native::check_syntax(&file, io::stdin().lock());
+        Command::Lsp {
+            action,
+            file,
+            line,
+            column,
+            symbol,
+            query,
+            new_name,
+            apply,
+            timeout,
+        } => {
+            let pool = LspPool::new();
+            let res = lsp::execute(
+                &pool,
+                LspInput {
+                    action,
+                    root,
+                    file,
+                    files: None,
+                    line,
+                    column,
+                    symbol,
+                    query,
+                    new_name,
+                    apply: Some(apply),
+                    timeout_sec: timeout,
+                },
+            )
+            .await;
+            pool.shutdown_all().await;
+            let val = res?;
+            println!("{}", serde_json::to_string_pretty(&val)?);
+            Ok(())
         }
-        EditCommand::TokenCount { file } => {
-            println!("{}", token_count::count_file(&root.join(file))?);
-            return Ok(());
+        Command::DebugAdapters => {
+            let mgr = DapManager::new();
+            let val = dap::execute(
+                &mgr,
+                DebugInput {
+                    action: "adapters".into(),
+                    root: Some(root),
+                    session_id: None,
+                    program: None,
+                    args: None,
+                    adapter: None,
+                    stop_on_entry: None,
+                    pid: None,
+                    host: None,
+                    port: None,
+                    file: None,
+                    line: None,
+                    condition: None,
+                    hit_condition: None,
+                    levels: None,
+                    frame_id: None,
+                    variable_ref: None,
+                    expression: None,
+                    context: None,
+                    clear: None,
+                    timeout_sec: None,
+                },
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&val)?);
+            Ok(())
         }
-    };
-    emit_patch(&root, changes)
-}
-
-pub(crate) fn read_project_file(root: &Path, path: &Path) -> Result<(PathBuf, String)> {
-    let absolute = resolve_project_file(root, path)?;
-    let source = fs::read_to_string(&absolute)
-        .with_context(|| format!("read UTF-8 source {}", path.display()))?;
-    ensure!(
-        !source.contains('\0'),
-        "expected text source: {}",
-        path.display()
-    );
-    Ok((absolute, source))
-}
-
-fn resolve_project_file(root: &Path, path: &Path) -> Result<PathBuf> {
-    let mut absolute = root.to_path_buf();
-    for component in path.components() {
-        match component {
-            Component::CurDir => continue,
-            Component::Normal(name) if !name.eq_ignore_ascii_case(".git") => absolute.push(name),
-            _ => bail!(
-                "expected a project-relative source path: {}",
-                path.display()
-            ),
+        Command::Minimize {
+            command,
+            exit_code,
+            file,
+            min_chars,
+            json,
+        } => {
+            let input = if let Some(f) = file {
+                MinimizeInput {
+                    command,
+                    exit_code: Some(exit_code),
+                    output: None,
+                    root: Some(root),
+                    file: Some(f),
+                    min_chars: Some(min_chars),
+                }
+            } else {
+                let mut raw = String::new();
+                io::stdin()
+                    .read_to_string(&mut raw)
+                    .context("read stdin for minimize")?;
+                MinimizeInput {
+                    command,
+                    exit_code: Some(exit_code),
+                    output: Some(raw),
+                    root: None,
+                    file: None,
+                    min_chars: Some(min_chars),
+                }
+            };
+            let val = minimize::minimize_output(input)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&val)?);
+            } else if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+                print!("{text}");
+            }
+            Ok(())
         }
-        let metadata = absolute
-            .symlink_metadata()
-            .with_context(|| format!("inspect {}", absolute.display()))?;
-        ensure!(
-            !is_path_redirect(&metadata),
-            "symbolic links are excluded: {}",
-            absolute.display()
-        );
     }
-    ensure!(
-        absolute.is_file(),
-        "expected an existing file: {}",
-        path.display()
-    );
-    Ok(absolute)
-}
-
-fn is_path_redirect(metadata: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
-        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    }
-    #[cfg(not(windows))]
-    metadata.is_symlink()
-}
-
-pub(crate) fn edit_path_policy(root: &Path) -> omp_edit::PathPolicy {
-    omp_edit::PathPolicy {
-        cwd: root.to_owned(),
-        home_dir: root.to_owned(),
-        url_schemes: Vec::new(),
-        url_alias_schemes: Vec::new(),
-        plan_writable_roots: Vec::new(),
-        plan_active: false,
-        block_auto_generated: true,
-    }
-}
-
-fn emit_patch(root: &Path, mut changes: Vec<Change>) -> Result<()> {
-    changes.retain(|change| change.before != change.after);
-    if changes.is_empty() {
-        return Ok(());
-    }
-    changes.sort_by(|left, right| left.path.cmp(&right.path));
-    ensure!(
-        changes.windows(2).all(|pair| pair[0].path != pair[1].path),
-        "duplicate file in edit batch"
-    );
-
-    #[cfg(unix)]
-    let mut identities = HashSet::new();
-    for change in &changes {
-        let (_absolute, current) = read_project_file(root, &change.path)?;
-        #[cfg(unix)]
-        {
-            let metadata = _absolute.metadata()?;
-            ensure!(
-                identities.insert((metadata.dev(), metadata.ino())),
-                "more than one path refers to the same file: {}",
-                change.path.display()
-            );
-        }
-        ensure!(
-            current == change.before,
-            "source changed during preview: {}",
-            change.path.display()
-        );
-    }
-
-    let mut output = BufWriter::new(io::stdout().lock());
-    for change in &changes {
-        git_patch::write_change(&mut output, change).context("write Git patch")?;
-    }
-    output.flush().context("flush Git patch")
 }

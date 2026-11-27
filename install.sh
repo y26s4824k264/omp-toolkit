@@ -1,136 +1,131 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo=y26s4824k264/omp-toolkit
-node_version=v24.22.3
-version=latest
-prefix=
-client=auto
-with_lsp_servers=true
+# One-command source build, install, and AI client adapter for OMP Toolkit.
+# Zero Node.js dependency, zero global prompt-file pollution.
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+bin_dir="${OMP_TOOLKIT_BIN_DIR:-$HOME/.local/bin}"
+clients=()
+dry_run=false
+force=false
+remove=false
+skip_build=false
+no_path_env=false
 
 usage() {
     cat <<'EOF'
-Usage: bash install.sh [options]
+Usage: ./install.sh [options]
 
-  --prefix DIR        Install into DIR
-  --version TAG       Install a release tag such as v0.2.0 (default: latest)
-  --client NAME       Configure local clients: auto (default), none, codex, or claude
-                      Auto detects Codex and Claude Code and configures MCP and global instructions
-  --without-lsp-servers  Skip installing the default language servers
-  --with-lsp-servers     Install the default language servers (already enabled)
-  --help              Show this help
+Build `omp-toolkit`, install the single binary, and optionally wire it into your AI coding software.
+
+Options:
+  --bin-dir DIR         Install directory for `omp-toolkit` (default: ~/.local/bin)
+  --client NAME         Client to configure (repeatable):
+                          none (install binary only, default)
+                          list (inspect detected clients without changing anything)
+                          auto (configure all detected clients)
+                          antigravity | antigravity-mcp | claude-code | codex |
+                          cursor | vscode | claude-desktop | windsurf | zed |
+                          workbuddy | codebuddy | trae | qoder | lingma |
+                          kiro | cline | roo-code
+  --dry-run             Preview setup/remove actions without modifying client configs
+  --remove              Remove `omp` integration from selected `--client` target(s)
+  --force               Replace an existing `omp` entry even if it points elsewhere
+  --no-path-env         Do not embed current PATH into GUI MCP configs
+  --skip-build          Reuse existing target/release/omp-toolkit instead of running cargo build
+  -h, --help            Show this help
+
+Examples:
+  ./install.sh --client antigravity
+  ./install.sh --client workbuddy --client trae --client qoder
+  ./install.sh --client auto --dry-run
+  ./install.sh --client antigravity --client claude-code --client cursor
+  ./install.sh --skip-build --client antigravity --remove
 EOF
 }
 
 die() {
-    printf 'install: %s\n' "$*" >&2
+    printf 'install.sh: %s\n' "$*" >&2
     exit 1
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --version|--prefix|--client)
-            [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 requires a value"
-            case "$1" in
-                --version) version=$2 ;;
-                --prefix) prefix=$2 ;;
-                --client) client=$2 ;;
-            esac
+        --bin-dir)
+            [[ $# -ge 2 && -n "$2" ]] || die '--bin-dir requires a directory'
+            bin_dir=$2
             shift 2
             ;;
-        --with-lsp-servers) with_lsp_servers=true; shift ;;
-        --without-lsp-servers) with_lsp_servers=false; shift ;;
-        --help|-h) usage; exit 0 ;;
+        --client)
+            [[ $# -ge 2 && -n "$2" ]] || die '--client requires a value'
+            clients+=("$2")
+            shift 2
+            ;;
+        --dry-run) dry_run=true; shift ;;
+        --force) force=true; shift ;;
+        --remove) remove=true; shift ;;
+        --skip-build) skip_build=true; shift ;;
+        --no-path-env) no_path_env=true; shift ;;
+        -h|--help) usage; exit 0 ;;
         *) die "unknown option: $1 (see --help)" ;;
     esac
 done
 
-case "$client" in
-    auto|none|codex|claude) ;;
-    *) die 'client must be auto, none, codex, or claude' ;;
-esac
+release_bin="$repo_dir/target/release/omp-toolkit"
 
-valid_tag() {
-    [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
-}
-[[ "$version" == latest ]] || valid_tag "$version" || die 'version must be latest or a release tag such as v0.2.0'
+if ! "$skip_build"; then
+    command -v cargo >/dev/null || die 'cargo is required to build from source'
+    (
+        cd "$repo_dir"
+        cargo build --release --bin omp-toolkit
+    )
+fi
 
-case "$(uname -s)" in
-    Darwin) platform=darwin ;;
-    Linux) platform=linux ;;
-    *) die 'use install.ps1 on Windows' ;;
-esac
+[[ -x "$release_bin" ]] || die "binary not found at $release_bin (omit --skip-build to compile)"
 
-command -v curl >/dev/null || die 'curl is required'
-if command -v sha256sum >/dev/null; then
-    checksum() { sha256sum "$1"; }
-elif command -v shasum >/dev/null; then
-    checksum() { shasum -a 256 "$1"; }
+if "$remove"; then
+    installed_bin="$release_bin"
+    [[ -x "$bin_dir/omp-toolkit" ]] && installed_bin="$bin_dir/omp-toolkit"
 else
-    die 'sha256sum or shasum is required'
+    if "$dry_run"; then
+        installed_bin="$bin_dir/omp-toolkit"
+        printf '[dry-run] Would install %s -> %s\n' "$release_bin" "$installed_bin"
+    else
+        mkdir -p "$bin_dir"
+        tmp_bin="$bin_dir/.omp-toolkit.tmp.$$"
+        cp "$release_bin" "$tmp_bin"
+        chmod 755 "$tmp_bin"
+        mv -f "$tmp_bin" "$bin_dir/omp-toolkit"
+        installed_bin="$bin_dir/omp-toolkit"
+        printf 'Installed binary: %s\n' "$installed_bin"
+    fi
 fi
 
-umask 077
-stage_dir=$(mktemp -d "${TMPDIR:-/tmp}/omp-toolkit.XXXXXXXX")
-trap 'rm -rf -- "$stage_dir"' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-download() {
-    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-        --retry 2 --connect-timeout 15 --max-time 300 --output "$2" "$1"
-}
-
-if [[ "$version" == latest ]]; then
-    download "https://github.com/$repo/releases/latest/download/VERSION" "$stage_dir/VERSION"
-    version=$(LC_ALL=C awk 'NR == 1 { sub(/\r$/, ""); tag = $0 } END { if (NR == 1) print tag }' "$stage_dir/VERSION")
-    valid_tag "$version" || die 'GitHub returned an invalid release tag'
+if [[ ${#clients[@]} -eq 0 ]]; then
+    clients=("none")
 fi
 
-verify() {
-    local expected actual
-    expected=$(awk -v asset="$2" '$2 == asset || $2 == "*" asset { print tolower($1) }' "$3")
-    [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || die "missing or invalid checksum for $2"
-    actual=$(checksum "$1" | awk '{ print tolower($1) }')
-    [[ "$actual" == "$expected" ]] || die "checksum mismatch for $2"
-}
-
-node_bin=$(command -v node || true)
-npm_cli=
-system_node_is_usable() {
-    [[ "$node_bin" == /* ]] || return 1
-    [[ "$("$node_bin" -p 'Number(process.versions.node.split(".")[0]) >= 24' 2>/dev/null)" == true ]] || return 1
-    ! "$with_lsp_servers" || npm --version >/dev/null 2>&1
-}
-
-if ! system_node_is_usable; then
-    case "$(uname -m)" in
-        x86_64|amd64) arch=x64 ;;
-        arm64|aarch64) arch=arm64 ;;
-        *) die 'supported architectures are x64 and arm64' ;;
-    esac
-    command -v tar >/dev/null || die 'tar is required to install Node.js'
-    node_dist="https://nodejs.org/dist/$node_version"
-    node_name="node-$node_version-$platform-$arch"
-    node_archive="$node_name.tar.gz"
-    printf 'Downloading Node.js %s with npm for %s/%s\n' "$node_version" "$platform" "$arch"
-    download "$node_dist/SHASUMS256.txt" "$stage_dir/node-checksums.txt"
-    download "$node_dist/$node_archive" "$stage_dir/$node_archive"
-    verify "$stage_dir/$node_archive" "$node_archive" "$stage_dir/node-checksums.txt"
-    npm_dir="$node_name/lib/node_modules/npm"
-    tar -xzf "$stage_dir/$node_archive" -C "$stage_dir" "$node_name/bin/node" "$npm_dir"
-    node_bin="$stage_dir/$node_name/bin/node"
-    npm_cli="$stage_dir/$npm_dir/bin/npm-cli.js"
-    [[ -x "$node_bin" && -f "$npm_cli" ]] || die 'Node.js archive did not contain Node and npm'
+# Skip setup when --client none
+if [[ ${#clients[@]} -eq 1 && "${clients[0]}" == "none" ]]; then
+    printf '\nBinary ready. Run `%s setup --client list` to inspect supported AI clients,\n' "$installed_bin"
+    printf 'or `%s setup --client antigravity` (or `auto`) to connect.\n' "$installed_bin"
+    exit 0
 fi
 
-release="https://github.com/$repo/releases/download/$version"
-download "$release/SHA256SUMS" "$stage_dir/SHA256SUMS"
-download "$release/install-release.mjs" "$stage_dir/install-release.mjs"
-verify "$stage_dir/install-release.mjs" install-release.mjs "$stage_dir/SHA256SUMS"
+setup_args=(setup)
+for c in "${clients[@]}"; do
+    setup_args+=(--client "$c")
+done
+if "$dry_run"; then setup_args+=(--dry-run); fi
+if "$force"; then setup_args+=(--force); fi
+if "$remove"; then setup_args+=(--remove); fi
+if "$no_path_env"; then setup_args+=(--no-path-env); fi
 
-install_args=(--version "$version" --client "$client")
-if [[ -n "$prefix" ]]; then install_args+=(--prefix "$prefix"); fi
-if ! "$with_lsp_servers"; then install_args+=(--without-lsp-servers); fi
-if [[ -n "$npm_cli" ]]; then install_args+=(--portable-node "$node_bin" --npm-cli "$npm_cli"); fi
-"$node_bin" "$stage_dir/install-release.mjs" "${install_args[@]}"
+runner="$installed_bin"
+if "$dry_run" && [[ ! -x "$runner" ]]; then
+    runner="$release_bin"
+    setup_args+=(--install-bin "$bin_dir")
+fi
+
+"$runner" "${setup_args[@]}"

@@ -2,164 +2,137 @@
 
 [English](README.md) · 简体中文
 
-在 WorkBuddy、Codex、Claude 或终端中使用 Oh My Pi 的源码检查、补丁预览、Shell、LSP 诊断和调试能力。工具在本机运行，无需另装 Oh My Pi 或登录模型账户。
+从 [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) 重新精简抽取的**纯 Rust 单二进制**代码智能工具箱，原生支持 **Windows / macOS / Linux**（`x64` & `arm64`），一键适配 **Antigravity（反重力）**、**ChatGPT 桌面端 / Codex**、**WorkBuddy**、**CodeBuddy**、**Trae / Trae CN**、**Qoder**、**通义灵码**、**Claude Code**、**Cursor**、**VS Code / GitHub Copilot**、**Claude Desktop**、**Windsurf**、**Kiro**、**Cline**、**Roo Code**、**Zed** 及任意 stdio MCP 客户端。
 
-## 安装 v0.4.0
+- **三端单二进制约 20 MB**：完整支持 macOS（`arm64`/`x64`）、Linux（`x64`/`arm64`）、Windows（`x64`/`arm64`），无需 Node.js 运行时，不打包 94 MB 嵌入式 bash，不强制预装 npm 语言服务器。
+- **MCP 与 CLI 进程内直调**：零子进程 fork 套娃，零 `/tmp` 临时 patch 泄漏。
+- **对宿主 AI 零干扰、零污染**：绝不修改全局 `CLAUDE.md`、`AGENTS.md` 或 `GEMINI.md`；不抢占宿主原生 `Edit`/`Bash`；涉及代码改写与冲突解决的操作默认只读预览 unified diff（`apply: false`）。
+- **内置跨平台一键适配与卸载**：`omp-toolkit setup` 支持 17 种国内外主流客户端的自动检测、演练预览（`--dry-run`）、一键接入和无痕卸载（`--remove`）。
 
-安装器按 SHA-256 校验二进制包。`PATH` 中有兼容的 Node.js 和 npm 时会复用，否则从上游下载并校验。默认安装常用语言服务器。检查和应用补丁、预览 LSP 重命名时需安装 Git。 [发布包和校验值](https://github.com/y26s4824k264/omp-toolkit/releases/tag/v0.4.0)
+---
 
-**macOS 和 Linux**
+## 核心能力（8 个正交 MCP 工具）
 
-```sh
-curl -fsSLo install.sh https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.4.0/install.sh && bash install.sh --version v0.4.0
-```
-
-**Windows PowerShell 5.1 或更新版本**
-
-```powershell
-Invoke-WebRequest -UseBasicParsing https://github.com/y26s4824k264/omp-toolkit/releases/download/v0.4.0/install.ps1 -OutFile install.ps1; if ($?) { & .\install.ps1 -Version v0.4.0 }
-```
-
-默认目录为 `$HOME/.local/omp-toolkit` 和 `%LOCALAPPDATA%\OMP Toolkit`。用 `--prefix DIR` 或 `-Prefix DIR` 自定义目录，用 `--without-lsp-servers` 或 `-WithoutLspServers` 跳过常用语言服务器。按安装输出将 `bin` 加入 `PATH`，再运行 `omp-refactor --version` 和 `omp-toolkit-mcp --version`。
-
-如果只安装命令和生成接入配置，运行下载后的脚本并指定 `none`。
-
-```sh
-bash install.sh --version v0.4.0 --client none
-```
-
-```powershell
-& .\install.ps1 -Version v0.4.0 -Client none
-```
-
-| 系统 | 架构 | 要求 |
+| MCP 工具 | 读写模式 | 抽取自 OMP (`v19.1.0`) 的精华能力 |
 | --- | --- | --- |
-| macOS | x64、arm64 | macOS 15+ |
-| Linux | x64、arm64 | 使用 glibc 的发行版，如 Ubuntu 22.04+ |
-| Windows | x64、arm64 | PowerShell 5.1+ |
+| `code_summary` | 只读 | Tree-sitter AST 智能折叠阅读（按 `unfold_until_lines` 预算渐进 BFS 展开）+ **精准语法块展开（`block_line`）**（自动包含 Rust `#[...]`/`///` 注释、Python/TS/Java 装饰器），读大文件省 60%–80% token 且保留精确行号。 |
+| `code_outline` | 只读 | Tree-sitter 毫秒级符号大纲（函数、结构体、类、接口、方法及精确起止行号），无需等待 LSP 启动。 |
+| `ast_grep` | 只读 | 全仓并行 AST 结构搜索（`omp-ast` + `omp-xfs`），自动遵守 `.gitignore`/worktree exclude、自动推断语言、支持 glob、多 pattern、元变量捕获与分页。 |
+| `ast_edit` | 默认预览 | 全仓并行 AST 结构化改写，改写后强制执行 tree-sitter 语法校验；默认 `apply: false` 返回 unified diff，`apply: true` 原子写盘。 |
+| `lsp` | 常驻连接池 | 跨平台常驻 LSP 连接池（复用预热语言服务器，每次查询前自动同步宿主 Agent 的外部磁盘改写）。内置 OMP 55 种语言服务器配置（支持 `.omp/lsp.json` 覆盖），支持 `status`、`diagnostics`、`definition`、`references`、`hover`、`type_definition`、`implementation`、`symbols`、`workspace_symbols`、`code_actions`、`rename`、`rename_file`（走 `workspace/willRenameFiles` 自动更新 import）。 |
+| `debug` | 常驻多会话 | 跨平台常驻多会话 DAP 调试器，内置 OMP 14 种适配器配置（同时支持 stdio 与 TCP socket 如 `dlv`/`codelldb`），完整支持 `launch`、`attach`、条件断点、单步、`threads`、`stack_trace`、`scopes`、`variables`、`evaluate`、`output`、`terminate`。 |
+| `minimize_output` | 只读 | 从 OMP `crates/shell` 独立剥离的命令输出压缩器（20+ Rust 过滤器 + 67 个内置 TOML 管道，覆盖 `cargo`、`git`、`pytest`、`jest`、`tsc`、`go`、`docker`、`gradle` 等），不含 bash 引擎，且支持非 0 退出码失败日志摘要。 |
+| `git_conflicts` | 默认预览 | 复刻 OMP `conflict://` 理念：基于 `omp-xfs` 并行扫描全仓 2-way 与 diff3 3-way Git 冲突标记，支持按编号/批量结构化解决（`ours`/`theirs`/`base`/`both`/`both_reverse`/`delete`/`custom` 并支持 `@ours`/`@theirs`/`@base`/`@both` 占位行展开），完美保留 CRLF，默认 diff 预览、`apply: true` 原子写盘。 |
 
-## 接入编程智能体
+---
 
-安装器默认检测 `PATH` 中的 Codex 和 Claude Code CLI，并以 `omp` 为名称注册本机 stdio 服务。macOS/Linux 上可用 `--client codex` 或 `--client claude` 单独选择，Windows 上用 `-Client codex` 或 `-Client claude`。已有的 `omp` 条目如果指向别处会保留。客户端配置指向本次安装时，安装器会在该客户端的全局指令中添加一段带标记的工具说明。
+## 支持的 AI 编程软件一览（17 种目标）
 
-手动接入所需的 `mcp-config.json`、`vscode-mcp.json` 和 `AGENT-INSTRUCTIONS.md` 都在安装目录下。把生成的 `omp` 条目合并到客户端现有的服务列表即可，启动命令和参数已填好本机绝对路径。
+| 软件 | 一键适配命令 | 适配方式与写入位置 |
+| --- | --- | --- |
+| **Google Antigravity（反重力）** | `./install.sh --client antigravity` | 生成原生可一键开关的插件包 `~/.gemini/config/plugins/omp-toolkit/`（`plugin.json` + `mcp_config.json` + 按需加载 `SKILL.md`） |
+| **Antigravity（仅全局 MCP）** | `./install.sh --client antigravity-mcp` | 原子合并到 `~/.gemini/config/mcp_config.json` |
+| **腾讯 WorkBuddy** | `./install.sh --client workbuddy` | 原子合并到 `~/.workbuddy-ai/mcp.json`（或共用 `~/.codebuddy/.mcp.json`，带 `type: stdio`）；也可用 `--print workbuddy` 粘贴到桌面端「连接器 → 自定义连接器」 |
+| **腾讯 CodeBuddy（CLI / IDE）** | `./install.sh --client codebuddy` | 原子合并到 `~/.codebuddy/.mcp.json`（`mcpServers.omp`，带 `type: stdio`） |
+| **字节跳动 Trae / Trae CN** | `./install.sh --client trae` | 原子合并到 `~/.trae/mcp.json`（Trae CN 独立目录时写入 `~/.trae-cn/mcp.json`） |
+| **阿里云 Qoder** | `./install.sh --client qoder` | 原子合并 `mcpServers.omp` 到 `~/.qoder/settings.json`（严格保留其他配置项） |
+| **阿里云通义灵码** | `omp-toolkit setup --print lingma` | 输出标准 `mcpServers` JSON 供 IDE 侧边栏「个人设置 → MCP 服务 → 手动添加」粘贴 |
+| **Claude Code** | `./install.sh --client claude-code` | 调用 `claude mcp add --scope user --transport stdio omp -- <bin> mcp`（不改 `CLAUDE.md`） |
+| **ChatGPT 桌面端 / Codex** | `./install.sh --client codex`（或 `chatgpt`） | 保留注释原子更新 `~/.codex/config.toml` 的 `[mcp_servers.omp]`（不改 `AGENTS.md`，无 `codex` CLI 也能生效） |
+| **Cursor** | `./install.sh --client cursor` | 原子合并到 `~/.cursor/mcp.json`（`mcpServers.omp`） |
+| **VS Code / GitHub Copilot** | `./install.sh --client vscode` | 原子合并到用户级 `Code/User/mcp.json`（`servers.omp`） |
+| **Claude Desktop** | `./install.sh --client claude-desktop` | 原子合并到 `claude_desktop_config.json`（`mcpServers.omp`） |
+| **Windsurf** | `./install.sh --client windsurf` | 原子合并到 `~/.codeium/windsurf/mcp_config.json`（`mcpServers.omp`） |
+| **AWS Kiro** | `./install.sh --client kiro` | 原子合并到 `~/.kiro/settings/mcp.json`（`mcpServers.omp`） |
+| **Cline（VS Code 扩展）** | `./install.sh --client cline` | 原子合并到 `globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
+| **Roo Code（VS Code 扩展）** | `./install.sh --client roo-code` | 原子合并到 `globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json` |
+| **Zed** | `omp-toolkit setup --print zed` | 输出 `context_servers.omp` JSON 片段供粘贴到 JSONC 设置中 |
 
-| 客户端 | 接入与验证 |
-| --- | --- |
-| Codex | 运行 `codex mcp list` 检查是否已注册。 [文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) |
-| Claude Code | 运行 `claude mcp get omp` 检查是否已注册。 [文档](https://code.claude.com/docs/en/mcp#option-3-add-a-local-stdio-server) |
-| WorkBuddy | 在「连接器 → 自定义连接器 → 添加 MCP」中把 `mcpServers.omp` 合并到 `mcp.json`。如有信任提示，在 WorkBuddy 中确认。 [文档](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Connector) |
-| Claude Desktop | 在「Developer → Edit Config」中合并 `mcpServers.omp`，然后重启应用。 [文档和配置路径](https://modelcontextprotocol.io/docs/develop/connect-local-servers) |
-| 其他 stdio 客户端 | 使用生成的 `command` 和 `args`。Cursor 和当前 Copilot 使用 `mcpServers.omp`，Copilot 条目加 `"tools": ["*"]`。由 VS Code 编辑器管理的配置使用 `servers.omp`。 [Cursor](https://prod.cursor.com/help/customization/mcp) · [VS Code 和 Copilot](https://code.visualstudio.com/docs/agents/reference/mcp-configuration) |
+> 完整配置路径、macOS/Linux GUI 应用 `PATH` 继承处理与冲突保护细节见 [docs/clients.md](docs/clients.md)。
 
-新开一个会话，让智能体在测试项目中调用 `ast_find`。Codex 中的工具前缀是 `mcp__omp__`。远程会话需要能访问装有工具的机器或执行环境。
+---
 
-## 检查源码和预览改动
+## 快速上手
 
-从 Git 项目的根目录运行以下示例。编辑示例假定 `src/a.ts` 的第 1 行包含 `oldCall(7)`。用 `--root` 可选择另一个项目。调用 MCP 时，`root` 传项目绝对路径，文件字段传项目内相对路径。
+构建需要 Rust 工具链（[rust-toolchain.toml](rust-toolchain.toml) 指定的 nightly 版本用于上游 `xutf` 的 `portable_simd`）。
 
-**AST** 按语法结构匹配，可预览同一种改写在多个文件中的结果。
-
-```sh
-omp-refactor ast-find --lang typescript --pattern 'oldCall($VALUE)' src/a.ts
-omp-refactor ast --lang typescript --pattern 'oldCall($VALUE)' --rewrite 'newCall($VALUE)' src/a.ts > ast.patch
-git apply --check -- ast.patch
-```
-
-**Hashline** 会用文件当前标签校验补丁。先用 `omp-refactor read-summary` 定位代码，再用 `omp-refactor read` 读取最新行锚点。**Sloppy** 支持文本锚点和基于语法的块操作。命令需列出编辑文件中的所有目标文件。 [Sloppy 语法](https://github.com/can1357/oh-my-pi/blob/v19.1.0/crates/edit/prompts/sloppy.md)
-
-```sh
-printf '%s\n' '*** Edit File: src/a.ts' '*** Find' 'oldCall(7)' '*** Replace' 'newCall(7)' > change.edit
-omp-refactor sloppy --patch change.edit src/a.ts > sloppy.patch
-git apply --check -- sloppy.patch
-```
-
-**Magic** 把改动描述整理成供编程智能体读取的计划。每个文件的描述以 `# relative/path` 开头。把计划的 `systemPrompt` 和各文件的 `request` 交给智能体，内容可能包含项目源码。将返回的行操作保存到 `replies.json`，再用 `preview` 按原始快照校验并生成补丁。摘录缺少必要上下文时可用 `prepare --full`。 [Magic 源码说明](magic/UPSTREAM.md)
-
-```sh
-printf '%s\n' '# src/a.ts' '- Replace oldCall with newCall on line 1.' > changes.md
-omp-magic prepare --root . --instructions changes.md > plan.json
-```
-
-```json
-{"replies":[{"path":"src/a.ts","operations":"[\"sub\",1,\"oldCall\",\"newCall\"]"}]}
-```
+### 1. 仅编译并安装二进制（不动任何 AI 软件配置）
 
 ```sh
-omp-magic preview --root . --plan plan.json --replies replies.json > magic.patch
-git apply --check -- magic.patch
+./install.sh
+# 单一可执行文件安装到 ~/.local/bin/omp-toolkit
 ```
 
-这些命令只预览，不直接写入源码。确认完整差异后，再用 `git apply -- PATH.patch` 应用。源码变化后需重新预览。
-
-从当前源码构建的版本支持用 `sub` 插入多行替换文本。编辑后的文件解析失败时，预览会尝试指出破坏语法的操作，按提示修正后即可重跑。
-
-## 保存项目经验和技能草稿
-
-用 `--root` 指定记录所属的项目。`save` 去重保存经验，`list` 查看记录，`skill preview` 输出草稿。`create` 在 `.omp-toolkit/learning/skills/` 下创建新的 `SKILL.md`，`update` 用来更新已经创建的草稿。审阅后再安装到编程智能体中。
+### 2. 检测本机已安装的 AI 软件并演练预览（只读不写盘）
 
 ```sh
-omp-refactor --root . learn save 'Check the complete Git patch before applying it.'
-omp-refactor --root . learn list
-printf '%s\n' 'Review the diff, then run git apply --check.' > patch-review.md
-omp-refactor --root . learn skill preview patch-review --description 'Review a Git patch' --body-file patch-review.md
-omp-refactor --root . learn skill create patch-review --description 'Review a Git patch' --body-file patch-review.md
-omp-refactor --root . learn skill update patch-review --description 'Review a Git patch' --body-file patch-review.md
+omp-toolkit setup --client list
+omp-toolkit setup --client auto --dry-run
 ```
 
-## 跟踪长期目标
-
-`omp-refactor goal` 把目标 ID、总目标、验收条件和当前里程碑存到项目的 `.omp-toolkit/goals/`。续做时用同一个项目根目录和 ID。用 Codex 等智能体的原生目标功能维持长期任务，用这份项目记录跟踪里程碑和验收证据。这个结构借鉴了 Oh My Pi 分开保存目标和待办的做法。 [Oh My Pi 目标续做](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-continuation.md) · [待办状态](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/prompts/goals/goal-todo-context.md)
+### 3. 一键编译、安装并适配
 
 ```sh
-omp-refactor --root . goal init release --objective 'Publish and verify the update' --criterion 'Platform tests pass' --criterion 'Public installation works'
-omp-refactor --root . goal focus release 'Run the platform tests'
-omp-refactor --root . goal record release 1 'CI run 123 passed the required platform jobs'
-omp-refactor --root . goal show release
+# macOS / Linux
+./install.sh --client antigravity                                       # 仅适配反重力（推荐原生插件）
+./install.sh --client antigravity --client claude-code --client cursor  # 同时适配多个客户端
+./install.sh --client auto                                              # 自动适配所有已检测到的客户端
 ```
 
-`goal list` 列出已有 ID。`goal clear-evidence release 1` 可撤回失效证据。`ready_for_review` 表示每项条件都已登记证据，关闭原生目标前还需核对这些证据是否仍能证明完成。
+```powershell
+# Windows PowerShell
+.\install.ps1 -Client antigravity
+.\install.ps1 -Client auto -DryRun
+```
 
-## 其他命令
+### 4. 一键无痕卸载（保留其他 MCP 配置）
 
-| 用途 | 命令 |
-| --- | --- |
-| 按多个关键词定位文件 | `omp-refactor ranked-find "keywords" --limit 10` |
-| 运行命令并保留完整日志 | `omp-shell run-log -- COMMAND ARGS...`。用 `omp-shell minimize` 摘要已有日志，用 `obash --json=native -c '…'` 解析 Bash 语法。 |
-| 查看语言服务器和诊断 | `omp-lsp catalog`、`omp-lsp status`、`omp-lsp check FILE...` 或 `omp-lsp definition`。诊断依赖项目的语言服务器。符号和文件重命名预览需要 macOS。 |
-| 使用多轮调试会话 | `omp-debug --session ABSOLUTE_DIR serve --root PROJECT`，再从另一个终端发送 `launch`、`break`、`continue` 或 `stop`。macOS 和 Linux 需要对应的 DAP 适配器。Windows 暂无持久 DAP 会话。 |
-| 统计日志中记录的上下文用量 | `omp-context-stats --turn 1 --requests ROLLOUT.jsonl` 读取 Codex rollout JSONL。 |
-| 通过 MCP 检查本机运行状态 | `service_ready` 检查环回端口或新增日志行。`profile_summary` 读取 V8 或 macOS `sample` 报告。`token_count` 离线估算文件 token。 |
+```sh
+omp-toolkit setup --client antigravity --remove
+omp-toolkit setup --client cursor --remove
+```
 
-用命令或子命令的 `--help` 查看参数。MCP 客户端会显示各工具的参数结构。
+语言服务器与调试适配器按需自行安装到系统 `PATH`（如 `rust-analyzer`、`typescript-language-server`、`pyright`、`gopls`、`lldb-dap`、`dlv`、`debugpy`），工具会自动探测并常驻复用。
 
-从当前源码构建的 `ranked-find` 会遵守 Git worktree 共享的 `info/exclude`。用该 worktree 作为 `--root`，搜索超时后缩小范围再查。macOS 和 Linux 上取消前台任务时，向本次 `run-log` 发送 `SIGINT` 或 `SIGTERM`，它会清理所属进程并保留原始日志。需要持续运行的服务交由宿主的任务管理器。
+---
 
-## 通过 MCP 读取 Office 和图片
+## CLI 常用示例
 
-两个工具都接收绝对目录 `root` 和目录内的相对路径 `file`。
+```sh
+# 智能折叠阅读大文件（按 ~120 行预算渐进展开）或精准展开单个完整语法块
+omp-toolkit summary src/code_ast.rs --unfold-until 120
+omp-toolkit summary src/code_ast.rs --block-line 135
 
-| 用途 | 除 `root` 和 `file` 之外的参数 |
-| --- | --- |
-| 读取 DOCX 正文 | `office_read` 接收 `start`、`end`。从 1 开始，包含首尾，每个段落或表格行占一个块。 |
-| 读取 PPT 文字和演讲者备注 | `office_read` 接收 `start`、`end`。按放映顺序从 1 开始，包含首尾。 |
-| 读取 Excel | 省略 `sheet` 可列出工作表。指定 `sheet` 和 A1 `range`，例如 `B4:E12`，可返回非空单元格的坐标、值和公式。公式单元格的值来自保存的缓存，缺少缓存时为 `null`。 |
-| 按需看图 | `image_read` 默认返回尺寸、格式和文件大小。指定 `max_edge` 可返回预览，或用 `crop: { x, y, width, height }` 查看局部。坐标从 0 开始，按应用 EXIF 方向后的原图像素计算。裁剪预览默认长边上限为 768 像素。 |
+# 快速提取文件符号大纲
+omp-toolkit outline src/mcp.rs --type function
 
-Office 默认每次返回最多 8,000 字节的内部 JSON。后续使用返回的 `next_offset` 作为 `offset`，并沿用原范围和字节预算。长记录可按 `part` 拼接 `record_json`，到 `last: true` 再解析。旧版 XLS、PPT 需要 LibreOffice（`soffice`），转换在临时副本上执行。转换可能规范化公式语法、重新计算缓存值。检查版式、图表和嵌入图片时使用视觉渲染。
+# 全仓并行 AST 搜索（自动推断语言并遵守 .gitignore）
+omp-toolkit ast-grep --pattern 'oldCall($$$ARGS)' --include 'src/**/*.ts'
 
-已知多个范围或裁剪区域时，用 `media_read` 一次读取。传入最多六项的 `items` 数组，每项沿用单项读取的参数，并带上 `type: "office"` 或 `type: "image"`。结果按输入顺序编号，逐项报告错误。每批最多返回两张预览和 24,000 字节的读取文本。后续提问可复用同一批结果。运行中的 MCP 服务最多缓存四份旧版 Office 转换，每次读取都核对源文件内容。
+# 全仓并行 AST 改写预览（确认后加 --apply 原子写盘）
+omp-toolkit ast-edit --pattern 'oldCall($$$ARGS)' --rewrite 'newCall($$$ARGS)'
 
-已有 Code Mode 的 Codex 会话可以在一个 `exec` 调用里直接使用已知的 OMP 读取工具，省去一次独立的模型工具搜索请求。安装指引提供了 Office 范围和图像裁剪的参数。已知图片路径和区域时，可调用 `tools.mcp__omp__image_read({root,file,crop:{x,y,width,height}})`，并用 `image(block)` 回传图像块。要在 CLI 里试用实验性 Code Mode，把[读取配置档](codex/omp-media.config.toml)保存为 `~/.codex/omp-media.config.toml`，用 `codex --profile omp-media` 启动。配置档允许 Code Mode 和常规工具并用，并沿用已有的 `omp` MCP 注册。 [Codex 配置档](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles)
+# 全仓扫描与结构化解决 Git 合并冲突（默认预览 diff，加 --apply 写盘）
+omp-toolkit conflicts scan
+omp-toolkit conflicts resolve src/app.rs --index 1 --choice ours
 
-只需要图像信息或已知局部时，用 OMP 读取。看整图、核对细节时，在 Codex 对话中直接看原图。已有图像足够判断时直接复用。生成或编辑图片用 Codex 内置 `imagegen`，传达用户的要求并提供原始参考图，其余创作选择交给生图工具。
+# 查看当前项目匹配的 LSP 服务器与本机 DAP 适配器
+omp-toolkit lsp status
+omp-toolkit debug-adapters
 
-## 从旧版升级
+# 压缩冗长构建或失败测试输出
+cargo test 2>&1 | omp-toolkit minimize --cmd "cargo test" --exit-code 101
+```
 
-旧脚本中的 `codex-context-stats` 要替换为 `omp-context-stats`。手写 MCP 配置应指向 `omp-toolkit-mcp`，Windows 上是 `omp-toolkit-mcp.exe`。新版安装包已移除旧的 `omp-codex-mcp` 别名。生成的配置可用来核对启动路径和参数。
+---
 
-## 源码和许可证
+## 项目文档导航
 
-macOS 或 Linux 从源码安装时需要 Git、Rustup、系统编译工具和 Node.js 24+。安装常用语言服务器还需 npm。在源码目录运行 `./scripts/install.sh --with-lsp-servers`，切到对应的 Git 标签可构建指定版本。 [源码安装脚本](scripts/install.sh) · [发布工作流](.github/workflows/release.yml)
+- [docs/clients.md](docs/clients.md) — 17 种国内外 AI 软件支持矩阵、一键适配/卸载与 GUI `PATH` 避坑指南
+- [docs/tools.md](docs/tools.md) — 8 个 MCP 工具参数手册与完整 CLI 参考
+- [docs/architecture.md](docs/architecture.md) — 精简抽取原则、架构图与核心工程设计
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 上游 Oh My Pi (`v19.1.0`) 与 RTK 开源归属声明
 
-本项目独立维护，采用 MIT 许可证。基础编辑引擎与 LSP 默认配置来自 Oh My Pi v19.0.0。Shell 和 `obash` 从 Oh My Pi v19.1.0 构建，也采用了该版本的部分文件系统和编辑修复。各平台压缩包内包含依赖声明，发布页提供校验值。 [许可证](LICENSE) · [第三方声明与确切上游版本](THIRD_PARTY_NOTICES.md)
+## 许可证
+
+MIT — 详见 [LICENSE](LICENSE)。
