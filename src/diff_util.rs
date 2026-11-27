@@ -149,6 +149,12 @@ pub fn write_atomic(path: &Path, content: &[u8]) -> Result<()> {
     temp.as_file().sync_all()?;
     if let Some(perms) = existing_perms {
         let _ = fs::set_permissions(temp.path(), perms);
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o644));
+        }
     }
     temp.persist(path)
         .map_err(|e| e.error)

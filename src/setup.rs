@@ -1388,10 +1388,18 @@ fn resolved_path_env(opts: &SetupOptions) -> Option<String> {
         return (!explicit.trim().is_empty()).then(|| explicit.clone());
     }
     let current = env::var_os("PATH")?;
+    let temp_root = env::temp_dir();
+    let canonical_temp = temp_root.canonicalize().ok();
     let mut seen = BTreeSet::new();
     let mut kept = Vec::new();
     for dir in env::split_paths(&current) {
-        if dir.is_absolute() && dir.is_dir() && seen.insert(dir.clone()) {
+        if !dir.is_absolute() || !dir.is_dir() {
+            continue;
+        }
+        if is_ephemeral_path(&dir, &temp_root, canonical_temp.as_deref()) {
+            continue;
+        }
+        if seen.insert(dir.clone()) {
             kept.push(dir);
         }
     }
@@ -1399,6 +1407,24 @@ fn resolved_path_env(opts: &SetupOptions) -> Option<String> {
         .ok()
         .and_then(|s| s.into_string().ok())
         .filter(|s| !s.is_empty())
+}
+
+fn is_ephemeral_path(dir: &Path, temp_root: &Path, canonical_temp: Option<&Path>) -> bool {
+    if dir.starts_with(temp_root) {
+        return true;
+    }
+    if let Some(ct) = canonical_temp
+        && dir.starts_with(ct)
+    {
+        return true;
+    }
+    let s = dir.to_string_lossy();
+    s.starts_with("/tmp/")
+        || s == "/tmp"
+        || s.starts_with("/private/tmp/")
+        || s == "/private/tmp"
+        || s.contains("/T/agy-plugin-cli-")
+        || s.contains("\\Temp\\")
 }
 
 fn resolve_home(override_home: Option<&Path>) -> Result<PathBuf> {
