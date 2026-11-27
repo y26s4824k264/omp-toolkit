@@ -81,10 +81,16 @@ pub async fn execute(pool: &LspPool, input: LspInput) -> Result<Value> {
                 .iter()
                 .filter(|s| s["available"] == true && s["matches_root"] == true)
                 .collect();
+            let installed_servers: Vec<&str> = servers
+                .iter()
+                .filter(|s| s["available"] == true)
+                .filter_map(|s| s["name"].as_str())
+                .collect();
             Ok(json!({
                 "root": root,
                 "active_connections": active,
                 "ready_for_project": available_matching,
+                "installed_servers": installed_servers,
                 "managed_lsp_dir": install::managed_lsp_root().map(|p| p.display().to_string()),
                 "total_catalog_servers": servers.len(),
                 "hint": "Run `omp-toolkit lsp-install` to auto-provision missing language servers (TypeScript, Vue, HTML/CSS/JSON/ESLint, Python, YAML, Bash, Docker, Tailwind, Svelte, Astro, GraphQL, Prisma, PHP, Go, Rust, Ruff).",

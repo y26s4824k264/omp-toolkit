@@ -15,7 +15,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, json};
 
 use crate::{diff_util::write_atomic, lsp::config};
 
@@ -442,7 +442,13 @@ fn install_npm_batch(
 
     let mut cmd = Command::new(&npm_bin);
     cmd.current_dir(&npm_dir)
-        .args(["install", "--no-audit", "--no-fund", "--omit=dev"])
+        .args([
+            "install",
+            "--no-audit",
+            "--no-fund",
+            "--omit=dev",
+            "--legacy-peer-deps",
+        ])
         .args(&pkgs);
     let output = cmd
         .output()
