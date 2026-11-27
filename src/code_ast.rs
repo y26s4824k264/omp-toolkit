@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail, ensure};
 use omp_ast::{
+    SupportLang,
     block::{BlockRangeOptions, NodeSpan, block_range_at, node_chain_at},
     language::grammar::{self, LanguageGrammar},
     ops::{resolve_language, resolve_supported_lang, supported_lang_list},
@@ -14,6 +15,7 @@ use omp_ast::{
         find_page, rewrite,
     },
     summary::{SummaryOptions, SummarySegment, summarize_code},
+    vue::parse_sfc_blocks,
 };
 use omp_vfs::Fs;
 use omp_xfs::glob::Selector;
@@ -296,7 +298,9 @@ pub fn code_outline(input: OutlineInput) -> Result<Value> {
     let display = display_relative(&root, &abs);
     let source = read_utf8_file(&abs, MAX_READ_BYTES)?;
     let lang = resolve_language(input.lang.as_deref(), &abs)?;
-    let _grammar = lang.grammar().load()?;
+    if lang != SupportLang::Vue {
+        let _grammar = lang.grammar().load()?;
+    }
 
     let mut allowed: Option<Vec<SymbolType>> = None;
     if let Some(ref raw_types) = input.types
@@ -332,13 +336,29 @@ pub fn code_outline(input: OutlineInput) -> Result<Value> {
         .map(format_outline_item)
         .collect();
 
-    Ok(json!({
+    let mut out = json!({
         "path": display,
         "language": lang.canonical_name(),
         "total_lines": source.lines().count(),
         "count": items.len(),
         "items": items,
-    }))
+    });
+    if lang == SupportLang::Vue {
+        let sections: Vec<Value> = parse_sfc_blocks(&source)
+            .into_iter()
+            .map(|b| {
+                json!({
+                    "tag": b.tag_name,
+                    "setup": b.is_setup,
+                    "lang": b.lang,
+                    "start_line": b.outer_start_line,
+                    "end_line": b.outer_end_line,
+                })
+            })
+            .collect();
+        out["sections"] = Value::Array(sections);
+    }
+    Ok(out)
 }
 
 fn format_outline_item(item: Item) -> Value {
@@ -785,6 +805,50 @@ mod tests {
         .await?;
         assert_eq!(applied["applied"], true);
         assert!(fs::read_to_string(root.join("src/b.ts"))?.contains("newCall('hi', 1)"));
+
+        // 6. Vue SFC summary, block_line expansion, and outline (with sections)
+        let vue_src = "<script setup lang=\"ts\">\nimport a from 'a';\nimport b from 'b';\nimport c from 'c';\nimport d from 'd';\n\nfunction load() {\n  const x = 1;\n  const y = 2;\n  const z = 3;\n  return x + y + z;\n}\n</script>\n<template>\n  <div class=\"card\">\n    <span>hello</span>\n  </div>\n</template>\n";
+        fs::write(root.join("src/Comp.vue"), vue_src)?;
+        let vue_sum = code_summary(SummaryInput {
+            root: root.clone(),
+            file: PathBuf::from("src/Comp.vue"),
+            lang: None,
+            block_line: None,
+            unfold_until_lines: Some(0),
+            unfold_limit_lines: None,
+            min_body_lines: Some(3),
+            min_comment_lines: None,
+            compact: Some(true),
+        })?;
+        assert!(vue_sum.starts_with("# src/Comp.vue (vue,"), "{vue_sum}");
+        assert!(!vue_sum.contains("syntax fallback"), "{vue_sum}");
+        assert!(vue_sum.contains("elided"), "{vue_sum}");
+
+        let vue_block = code_summary(SummaryInput {
+            root: root.clone(),
+            file: PathBuf::from("src/Comp.vue"),
+            lang: None,
+            block_line: Some(7),
+            unfold_until_lines: None,
+            unfold_limit_lines: None,
+            min_body_lines: None,
+            min_comment_lines: None,
+            compact: Some(true),
+        })?;
+        assert!(vue_block.contains("L7-L12"), "{vue_block}");
+        assert!(vue_block.contains("return x + y + z;"), "{vue_block}");
+
+        let vue_outline = code_outline(OutlineInput {
+            root: root.clone(),
+            file: PathBuf::from("src/Comp.vue"),
+            lang: None,
+            types: None,
+            include_imports: Some(false),
+        })?;
+        assert_eq!(vue_outline["language"], "vue");
+        assert_eq!(vue_outline["items"][0]["name"], "load");
+        assert_eq!(vue_outline["items"][0]["start_line"], 7);
+        assert_eq!(vue_outline["sections"].as_array().unwrap().len(), 2);
         Ok(())
     }
 }

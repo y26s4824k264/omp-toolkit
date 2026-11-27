@@ -46,6 +46,7 @@ struct DiagnosticEntry {
 struct ClientShared {
     server: ResolvedServer,
     workspace_uri: String,
+    ts_bridge: Option<Arc<LspClient>>,
     pending: Mutex<HashMap<i64, oneshot::Sender<Result<Value>>>>,
     diagnostics: Mutex<HashMap<String, DiagnosticEntry>>,
     diag_notify: Notify,
@@ -68,6 +69,16 @@ pub struct LspClient {
 impl LspClient {
     /// Spawn and initialize a persistent language server process.
     pub async fn start(server: ResolvedServer, init_timeout: Duration) -> Result<Arc<Self>> {
+        Self::start_with_bridge(server, init_timeout, None).await
+    }
+
+    /// Spawn and initialize a persistent language server process, optionally forwarding
+    /// Volar 3.x `tsserver/request` notifications to a companion `typescript-language-server`.
+    pub async fn start_with_bridge(
+        server: ResolvedServer,
+        init_timeout: Duration,
+        ts_bridge: Option<Arc<LspClient>>,
+    ) -> Result<Arc<Self>> {
         let workspace_uri = path_to_file_uri(&server.workspace_root)?;
         let mut cmd = Command::new(&server.binary);
         cmd.args(&server.args)
@@ -91,6 +102,7 @@ impl LspClient {
         let shared = Arc::new(ClientShared {
             server,
             workspace_uri,
+            ts_bridge,
             pending: Mutex::new(HashMap::new()),
             diagnostics: Mutex::new(HashMap::new()),
             diag_notify: Notify::new(),
@@ -274,7 +286,17 @@ impl LspClient {
 
     /// Synchronize a file on disk into the language server, emitting `didOpen`
     /// on first access or `didChange` + `didSave` if external tools modified it.
+    /// Also syncs any attached `ts_bridge` (e.g. Volar's companion TS server).
     pub async fn sync_file(&self, abs_path: &Path) -> Result<OpenDocument> {
+        if let Some(ref bridge) = self.shared.ts_bridge
+            && !bridge.is_dead()
+        {
+            let _ = bridge.sync_file_self(abs_path).await;
+        }
+        self.sync_file_self(abs_path).await
+    }
+
+    async fn sync_file_self(&self, abs_path: &Path) -> Result<OpenDocument> {
         let text = read_utf8_file(abs_path, MAX_DOC_BYTES)?;
         let uri = path_to_file_uri(abs_path)?;
         let mut docs = self.open_docs.lock().await;
@@ -661,12 +683,87 @@ async fn dispatch_message(
                         }
                     }
                 }
+                "tsserver/request" => {
+                    if let Some((req_id, command, payload)) = parse_tsserver_request(&params) {
+                        let shared = Arc::clone(shared);
+                        let stdin = Arc::clone(stdin);
+                        tokio::spawn(async move {
+                            let body = forward_tsserver_request(&shared, &command, payload).await;
+                            if !shared.dead.load(Ordering::SeqCst) {
+                                let resp = json!({
+                                    "jsonrpc": "2.0",
+                                    "method": "tsserver/response",
+                                    "params": [[req_id, body]],
+                                });
+                                let _ = send_frame(&stdin, &resp).await;
+                            }
+                        });
+                    }
+                }
                 _ => {}
             }
         }
         (None, None) => {}
     }
     Ok(())
+}
+
+fn parse_tsserver_request(params: &Value) -> Option<(Value, String, Value)> {
+    let arr = params.as_array()?;
+    let tuple = if arr.len() == 1 && arr[0].is_array() {
+        arr[0].as_array()?
+    } else {
+        arr
+    };
+    if tuple.len() < 2 {
+        return None;
+    }
+    let req_id = tuple[0].clone();
+    let command = tuple[1].as_str()?.to_owned();
+    let payload = tuple.get(2).cloned().unwrap_or(Value::Null);
+    Some((req_id, command, payload))
+}
+
+async fn forward_tsserver_request(
+    shared: &Arc<ClientShared>,
+    command: &str,
+    payload: Value,
+) -> Value {
+    let Some(ref bridge) = shared.ts_bridge else {
+        return Value::Null;
+    };
+    if bridge.is_dead() {
+        return Value::Null;
+    }
+    // Keep the companion TS server synchronized on whichever file Volar asks about.
+    let target_file = payload
+        .get("file")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get(0).and_then(Value::as_str))
+        .map(str::to_owned);
+    if let Some(ref f) = target_file {
+        let p = Path::new(f);
+        if p.is_file() {
+            let _ = bridge.sync_file(p).await;
+        }
+    }
+    let exec_params = json!({
+        "command": "typescript.tsserverRequest",
+        "arguments": [command, payload],
+    });
+    match bridge
+        .request("workspace/executeCommand", exec_params, Duration::from_secs(15))
+        .await
+    {
+        Ok(val) => {
+            if let Some(body) = val.as_object().and_then(|obj| obj.get("body")) {
+                body.clone()
+            } else {
+                val
+            }
+        }
+        Err(_) => Value::Null,
+    }
 }
 
 fn lookup_section(settings: &Value, section: Option<&str>) -> Value {

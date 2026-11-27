@@ -151,7 +151,15 @@
 		"command": "vue-language-server",
 		"args": ["--stdio"],
 		"fileTypes": [".vue"],
-		"rootMarkers": ["vue.config.js", "nuxt.config.js", "nuxt.config.ts", "package.json"]
+		"rootMarkers": [
+			"vue.config.js",
+			"nuxt.config.js",
+			"nuxt.config.ts",
+			"vite.config.ts",
+			"vite.config.js",
+			"tsconfig.json",
+			"package.json"
+		]
 	},
 	"astro": {
 		"command": "astro-ls",

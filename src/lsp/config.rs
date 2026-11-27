@@ -148,12 +148,24 @@ pub fn select_servers(
         .filter(|p| p.starts_with(root))
         .unwrap_or(root);
     let dirs = ancestor_dirs(root, start_dir);
+    let target_is_vue = file.is_some_and(is_vue_file);
     let mut selected = Vec::new();
 
     for def in defs {
-        if let Some(f) = file
-            && !matches_file(def, f)
+        let mut matches = match file {
+            Some(f) => matches_file(def, f),
+            None => true,
+        };
+        // Volar 3.x relies on `@vue/typescript-plugin` hosted inside `typescript-language-server`
+        // for `.vue` script intelligence, definitions, references, diagnostics, and renames.
+        if !matches
+            && target_is_vue
+            && def.name == "typescript-language-server"
+            && find_vue_ts_plugin_dir(start_dir).is_some()
         {
+            matches = true;
+        }
+        if !matches {
             continue;
         }
         if action == "diagnostics" && def.name == "emmet-language-server" {
@@ -183,22 +195,260 @@ pub fn select_servers(
                 }
             })
             .collect();
-        selected.push(ResolvedServer {
+        let mut resolved = ResolvedServer {
             def: def.clone(),
             binary,
             args,
             workspace_root,
             marker_depth: marker_idx.unwrap_or(usize::MAX),
-        });
+        };
+        configure_ts_and_vue_server(&mut resolved, file);
+        selected.push(resolved);
     }
 
     selected.sort_by(|a, b| {
         a.marker_depth
             .cmp(&b.marker_depth)
             .then_with(|| a.def.is_linter.cmp(&b.def.is_linter))
+            .then_with(|| {
+                if target_is_vue {
+                    vue_server_rank(&a.def.name, action).cmp(&vue_server_rank(&b.def.name, action))
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
             .then_with(|| a.def.name.cmp(&b.def.name))
     });
     selected
+}
+
+/// Resolve the companion `typescript-language-server` instance for a `vue-language-server`
+/// workspace so Volar 3.x's `tsserver/request` notifications can be forwarded via
+/// `typescript.tsserverRequest` with `@vue/typescript-plugin` loaded.
+pub fn resolve_vue_ts_companion(
+    defs: &[ServerDef],
+    root: &Path,
+    workspace_root: &Path,
+) -> Option<ResolvedServer> {
+    let def = defs.iter().find(|d| d.name == "typescript-language-server")?;
+    let dirs = ancestor_dirs(root, workspace_root);
+    let binary = resolve_executable(&def.command, &dirs)?;
+    let args = def
+        .args
+        .iter()
+        .map(|a| {
+            if a == "$PID" {
+                std::process::id().to_string()
+            } else {
+                a.clone()
+            }
+        })
+        .collect();
+    let mut resolved = ResolvedServer {
+        def: def.clone(),
+        binary,
+        args,
+        workspace_root: workspace_root.to_path_buf(),
+        marker_depth: 0,
+    };
+    configure_ts_and_vue_server(&mut resolved, Some(Path::new("Component.vue")));
+    Some(resolved)
+}
+
+fn vue_server_rank(name: &str, action: &str) -> u8 {
+    if action == "symbols" {
+        match name {
+            "vue-language-server" => 0,
+            "typescript-language-server" => 1,
+            _ => 2,
+        }
+    } else {
+        match name {
+            "typescript-language-server" => 0,
+            "vue-language-server" => 1,
+            _ => 2,
+        }
+    }
+}
+
+pub fn is_vue_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("vue"))
+}
+
+/// Locate `node_modules/typescript/lib` containing `tsserver.js`, searching upward from
+/// `workspace_root` (supporting monorepos like pnpm/yarn workspaces) and falling back to
+/// `omp-toolkit`'s managed LSP directory.
+pub fn find_ts_lib_dir(workspace_root: &Path) -> Option<PathBuf> {
+    find_upward_dir(workspace_root, &["node_modules", "typescript", "lib"], "tsserver.js")
+        .or_else(|| {
+            let root = crate::lsp::install::managed_lsp_root()?;
+            let managed = root
+                .join("npm")
+                .join("node_modules")
+                .join("typescript")
+                .join("lib");
+            managed.join("tsserver.js").is_file().then_some(managed)
+        })
+}
+
+/// Locate `node_modules/@vue/typescript-plugin`, searching upward from `workspace_root`
+/// and falling back to `omp-toolkit`'s managed LSP directory.
+pub fn find_vue_ts_plugin_dir(workspace_root: &Path) -> Option<PathBuf> {
+    find_upward_dir(
+        workspace_root,
+        &["node_modules", "@vue", "typescript-plugin"],
+        "package.json",
+    )
+    .or_else(|| {
+        let root = crate::lsp::install::managed_lsp_root()?;
+        let managed = root
+            .join("npm")
+            .join("node_modules")
+            .join("@vue")
+            .join("typescript-plugin");
+        managed.join("package.json").is_file().then_some(managed)
+    })
+}
+
+/// Heuristic check for Vue projects so `typescript-language-server` loads
+/// `@vue/typescript-plugin` even when inspecting `.ts` files that import `.vue` components.
+pub fn is_vue_project(workspace_root: &Path, target_file: Option<&Path>) -> bool {
+    if target_file.is_some_and(is_vue_file) {
+        return true;
+    }
+    for marker in [
+        "vue.config.js",
+        "vue.config.ts",
+        "vue.config.mjs",
+        "nuxt.config.js",
+        "nuxt.config.ts",
+        "nuxt.config.mjs",
+    ] {
+        if workspace_root.join(marker).is_file() {
+            return true;
+        }
+    }
+    if let Ok(tsconfig) = fs::read_to_string(workspace_root.join("tsconfig.json"))
+        && tsconfig.contains(".vue")
+    {
+        return true;
+    }
+    let mut cur = Some(workspace_root);
+    for _ in 0..4 {
+        let Some(dir) = cur else {
+            break;
+        };
+        let pkg_path = dir.join("package.json");
+        if let Ok(meta) = fs::metadata(&pkg_path)
+            && meta.is_file()
+            && meta.len() <= 256 * 1024
+            && let Ok(raw) = fs::read_to_string(&pkg_path)
+            && let Ok(val) = serde_json::from_str::<Value>(&raw)
+            && package_json_uses_vue(&val)
+        {
+            return true;
+        }
+        cur = dir.parent();
+    }
+    false
+}
+
+fn package_json_uses_vue(pkg: &Value) -> bool {
+    for section in ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] {
+        if let Some(obj) = pkg.get(section).and_then(Value::as_object)
+            && obj
+                .keys()
+                .any(|k| k == "vue" || k == "nuxt" || k.starts_with("@vue/") || k == "@vitejs/plugin-vue")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn find_upward_dir(start: &Path, rel_segments: &[&str], required_file: &str) -> Option<PathBuf> {
+    let mut cur = Some(start);
+    for _ in 0..8 {
+        let Some(dir) = cur else {
+            break;
+        };
+        let mut candidate = dir.to_path_buf();
+        for seg in rel_segments {
+            candidate.push(seg);
+        }
+        if candidate.join(required_file).is_file() {
+            return Some(candidate);
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+fn configure_ts_and_vue_server(resolved: &mut ResolvedServer, target_file: Option<&Path>) {
+    let ts_lib = find_ts_lib_dir(&resolved.workspace_root);
+    match resolved.def.name.as_str() {
+        "typescript-language-server" => {
+            if let Some(ref ts_lib_dir) = ts_lib
+                && resolved.def.init_options.pointer("/tsserver/path").is_none()
+            {
+                merge_json_value(
+                    &mut resolved.def.init_options,
+                    serde_json::json!({
+                        "tsserver": {
+                            "path": ts_lib_dir.join("tsserver.js").to_string_lossy()
+                        }
+                    }),
+                );
+            }
+            if is_vue_project(&resolved.workspace_root, target_file)
+                && let Some(plugin_dir) = find_vue_ts_plugin_dir(&resolved.workspace_root)
+            {
+                ensure_vue_ts_plugin(&mut resolved.def.init_options, &plugin_dir);
+            }
+        }
+        "vue-language-server" => {
+            if let Some(ref ts_lib_dir) = ts_lib
+                && ts_lib_dir.join("typescript.js").is_file()
+                && !resolved.args.iter().any(|a| a.starts_with("--tsdk"))
+            {
+                resolved
+                    .args
+                    .push(format!("--tsdk={}", ts_lib_dir.display()));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn ensure_vue_ts_plugin(init_options: &mut Value, plugin_dir: &Path) {
+    if !init_options.is_object() {
+        *init_options = Value::Object(Map::new());
+    }
+    let Some(root_obj) = init_options.as_object_mut() else {
+        return;
+    };
+    let plugins = root_obj
+        .entry("plugins")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if !plugins.is_array() {
+        *plugins = Value::Array(Vec::new());
+    }
+    if let Some(arr) = plugins.as_array_mut() {
+        let already = arr.iter().any(|item| {
+            item.get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|n| n == "@vue/typescript-plugin")
+        });
+        if !already {
+            arr.push(serde_json::json!({
+                "name": "@vue/typescript-plugin",
+                "location": plugin_dir.to_string_lossy(),
+                "languages": ["vue"],
+            }));
+        }
+    }
 }
 
 /// Report server availability and root marker match for `status` action.
@@ -393,5 +643,95 @@ fn merge_json_value(base: &mut Value, overlay: Value) {
             }
         }
         (slot, new_val) => *slot = new_val,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_fake_bin(dir: &Path, name: &str) -> Result<PathBuf> {
+        fs::create_dir_all(dir)?;
+        #[cfg(windows)]
+        let path = dir.join(format!("{name}.cmd"));
+        #[cfg(not(windows))]
+        let path = dir.join(name);
+        fs::write(&path, "@echo off\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&path, perms)?;
+        }
+        Ok(path)
+    }
+
+    #[test]
+    fn resolves_monorepo_vue_plugin_tsdk_and_server_order() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().canonicalize()?;
+        let frontend = root.join("frontend");
+        let app = frontend.join("apps/web-app");
+        let src_dir = app.join("src");
+        fs::create_dir_all(&src_dir)?;
+
+        // Place TypeScript & Vue TS plugin at the monorepo workspace root (`frontend/node_modules`).
+        let ts_lib = frontend.join("node_modules/typescript/lib");
+        fs::create_dir_all(&ts_lib)?;
+        fs::write(ts_lib.join("tsserver.js"), "// tsserver")?;
+        fs::write(ts_lib.join("typescript.js"), "// typescript")?;
+
+        let vue_plugin = frontend.join("node_modules/@vue/typescript-plugin");
+        fs::create_dir_all(&vue_plugin)?;
+        fs::write(vue_plugin.join("package.json"), r#"{"name":"@vue/typescript-plugin"}"#)?;
+
+        let bin_dir = frontend.join("node_modules/.bin");
+        create_fake_bin(&bin_dir, "typescript-language-server")?;
+        create_fake_bin(&bin_dir, "vue-language-server")?;
+
+        fs::write(frontend.join("package.json"), r#"{"dependencies":{"vue":"^3.5.0"}}"#)?;
+        fs::write(app.join("package.json"), r#"{"name":"web-app"}"#)?;
+        fs::write(app.join("tsconfig.json"), r#"{"include":["src/**/*.ts","src/**/*.vue"]}"#)?;
+        let vue_file = src_dir.join("Brand.vue");
+        fs::write(&vue_file, "<script setup lang=\"ts\"></script>")?;
+        let ts_file = src_dir.join("store.ts");
+        fs::write(&ts_file, "export const x = 1;")?;
+
+        assert_eq!(find_ts_lib_dir(&app), Some(ts_lib.clone()));
+        assert_eq!(find_vue_ts_plugin_dir(&app), Some(vue_plugin.clone()));
+        assert!(is_vue_project(&app, Some(&ts_file)));
+
+        let defs = load_definitions(&root)?;
+
+        // For `symbols` on `.vue`, `vue-language-server` comes first with `--tsdk`, followed by TSLS.
+        let sym_servers = select_servers(&defs, &root, Some(&vue_file), "symbols");
+        let sym_names: Vec<&str> = sym_servers.iter().map(|s| s.def.name.as_str()).collect();
+        assert_eq!(&sym_names[..2], &["vue-language-server", "typescript-language-server"]);
+        let expected_tsdk = format!("--tsdk={}", ts_lib.display());
+        assert!(sym_servers[0].args.contains(&expected_tsdk));
+
+        // For `definition` / `references` / `hover` on `.vue`, TSLS comes first with `@vue/typescript-plugin`.
+        let def_servers = select_servers(&defs, &root, Some(&vue_file), "definition");
+        let def_names: Vec<&str> = def_servers.iter().map(|s| s.def.name.as_str()).collect();
+        assert_eq!(&def_names[..2], &["typescript-language-server", "vue-language-server"]);
+        let tsls = &def_servers[0];
+        assert_eq!(
+            tsls.def.init_options.pointer("/tsserver/path").and_then(Value::as_str),
+            Some(ts_lib.join("tsserver.js").to_string_lossy().as_ref())
+        );
+        let plugins = tsls.def.init_options.get("plugins").and_then(Value::as_array).unwrap();
+        assert!(plugins.iter().any(|p| p["name"] == "@vue/typescript-plugin" && p["location"] == vue_plugin.to_string_lossy().as_ref()));
+
+        // Opening a `.ts` file inside the Vue project also equips TSLS with `@vue/typescript-plugin`.
+        let ts_servers = select_servers(&defs, &root, Some(&ts_file), "references");
+        assert_eq!(ts_servers[0].def.name, "typescript-language-server");
+        let ts_plugins = ts_servers[0].def.init_options.get("plugins").and_then(Value::as_array).unwrap();
+        assert!(ts_plugins.iter().any(|p| p["name"] == "@vue/typescript-plugin"));
+
+        let companion = resolve_vue_ts_companion(&defs, &root, &app).unwrap();
+        assert_eq!(companion.def.name, "typescript-language-server");
+        assert!(companion.def.init_options["plugins"].as_array().unwrap().iter().any(|p| p["name"] == "@vue/typescript-plugin"));
+        Ok(())
     }
 }

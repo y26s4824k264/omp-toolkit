@@ -58,7 +58,7 @@ pub const MANAGED_SERVERS: &[ManagedServerSpec] = &[
         command: "typescript-language-server",
         languages: "TypeScript / JavaScript",
         installer: InstallerKind::Npm,
-        packages: &["typescript", "typescript-language-server"],
+        packages: &["typescript@6", "typescript-language-server"],
     },
     ManagedServerSpec {
         id: "vue",

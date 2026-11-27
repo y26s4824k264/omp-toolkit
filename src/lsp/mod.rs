@@ -18,7 +18,11 @@ use serde_json::{Value, json};
 
 use crate::{
     lsp::{
-        config::{load_definitions, select_servers, server_status},
+        client::LspClient,
+        config::{
+            ResolvedServer, ServerDef, is_vue_file, load_definitions, resolve_vue_ts_companion,
+            select_servers, server_status,
+        },
         edit::{FileMove, apply_or_preview_workspace_edits, collect_workspace_edits},
         pool::LspPool,
     },
@@ -125,9 +129,10 @@ pub async fn execute(pool: &LspPool, input: LspInput) -> Result<Value> {
                     }));
                     continue;
                 }
-                let primary = candidates.iter().find(|s| !s.def.is_linter);
                 let mut selected = Vec::new();
-                if let Some(p) = primary {
+                if is_vue_file(&abs) {
+                    selected.extend(candidates.iter().filter(|s| !s.def.is_linter));
+                } else if let Some(p) = candidates.iter().find(|s| !s.def.is_linter) {
                     selected.push(p);
                 }
                 selected.extend(candidates.iter().filter(|s| s.def.is_linter));
@@ -136,7 +141,7 @@ pub async fn execute(pool: &LspPool, input: LspInput) -> Result<Value> {
                 let mut servers_used = Vec::new();
                 let mut errors = Vec::new();
                 for srv in selected {
-                    match pool.get_or_start(srv, timeout).await {
+                    match get_or_start_server(pool, &defs, &root, srv, timeout).await {
                         Ok(client) => {
                             let _ = client.reconcile_open_files().await;
                             match client.diagnostics(&abs, timeout).await {
@@ -234,8 +239,9 @@ pub async fn execute(pool: &LspPool, input: LspInput) -> Result<Value> {
             };
 
             let mut failures = Vec::new();
+            let mut empty_fallback: Option<Value> = None;
             for srv in candidates {
-                let client = match pool.get_or_start(&srv, timeout).await {
+                let client = match get_or_start_server(pool, &defs, &root, &srv, timeout).await {
                     Ok(c) => c,
                     Err(e) => {
                         failures.push(format!("{}: {e:#}", srv.def.name));
@@ -294,14 +300,23 @@ pub async fn execute(pool: &LspPool, input: LspInput) -> Result<Value> {
                             }
                             _ => val,
                         };
-                        return Ok(json!({
+                        let payload = json!({
                             "file": display,
                             "server": srv.def.name,
                             "result": formatted,
-                        }));
+                        });
+                        if !is_empty_lsp_result(&payload["result"]) {
+                            return Ok(payload);
+                        }
+                        if empty_fallback.is_none() {
+                            empty_fallback = Some(payload);
+                        }
                     }
                     Err(e) => failures.push(format!("{}: {e:#}", srv.def.name)),
                 }
+            }
+            if let Some(fallback) = empty_fallback {
+                return Ok(fallback);
             }
             bail!(
                 "no language server completed `{action}` for {display}: {}",
@@ -325,7 +340,7 @@ pub async fn execute(pool: &LspPool, input: LspInput) -> Result<Value> {
             );
             let mut failures = Vec::new();
             for srv in candidates {
-                let client = match pool.get_or_start(&srv, timeout).await {
+                let client = match get_or_start_server(pool, &defs, &root, &srv, timeout).await {
                     Ok(c) => c,
                     Err(e) => {
                         failures.push(format!("{}: {e:#}", srv.def.name));
@@ -404,7 +419,7 @@ pub async fn execute(pool: &LspPool, input: LspInput) -> Result<Value> {
             let mut clients_used = Vec::new();
 
             for srv in candidates {
-                let Ok(client) = pool.get_or_start(&srv, timeout).await else {
+                let Ok(client) = get_or_start_server(pool, &defs, &root, &srv, timeout).await else {
                     continue;
                 };
                 if !client.supports_will_rename_files().await {
@@ -459,6 +474,31 @@ pub async fn execute(pool: &LspPool, input: LspInput) -> Result<Value> {
             "unknown lsp action '{other}'; expected status, diagnostics, definition, references, hover, type_definition, implementation, symbols, workspace_symbols, code_actions, rename, rename_file, or shutdown"
         ),
     }
+}
+
+fn is_empty_lsp_result(val: &Value) -> bool {
+    match val {
+        Value::Null => true,
+        Value::Array(items) => items.is_empty(),
+        _ => false,
+    }
+}
+
+async fn get_or_start_server(
+    pool: &LspPool,
+    defs: &[ServerDef],
+    root: &Path,
+    srv: &ResolvedServer,
+    timeout: Duration,
+) -> Result<std::sync::Arc<LspClient>> {
+    if srv.def.name == "vue-language-server" {
+        let bridge = match resolve_vue_ts_companion(defs, root, &srv.workspace_root) {
+            Some(companion) => pool.get_or_start(&companion, timeout).await.ok(),
+            None => None,
+        };
+        return pool.get_or_start_with_bridge(srv, timeout, bridge).await;
+    }
+    pool.get_or_start(srv, timeout).await
 }
 
 fn format_diagnostic(server: &str, item: &Value) -> Value {

@@ -6,7 +6,10 @@ use ast_grep_core::tree_sitter::LanguageExt;
 use serde::Serialize;
 use tree_sitter::Node;
 
-use crate::SupportLang;
+use crate::{
+	SupportLang,
+	vue::{SfcBlock, SfcTagKind, parse_sfc_blocks},
+};
 
 /// Outline symbol category (LSP `DocumentSymbol.kind` names).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
@@ -147,6 +150,9 @@ pub struct Member {
 
 /// The top-level items of `source`, each with its direct members.
 pub fn outline(source: &str, lang: SupportLang) -> Vec<Item> {
+	if lang == SupportLang::Vue {
+		return outline_vue(source);
+	}
 	let root = lang.ast_grep(source);
 	let root = root.root().get_inner_node();
 	let bytes = source.as_bytes();
@@ -156,6 +162,43 @@ pub fn outline(source: &str, lang: SupportLang) -> Vec<Item> {
 		collect_items(node, bytes, lang, &mut items);
 	}
 	items
+}
+
+fn outline_vue(source: &str) -> Vec<Item> {
+	let mut items = Vec::new();
+	for block in parse_sfc_blocks(source) {
+		if block.kind != SfcTagKind::Script {
+			continue;
+		}
+		let inner = block.inner_source(source);
+		if inner.trim().is_empty() {
+			continue;
+		}
+		let sub_lang = block.script_lang();
+		let mut sub_items = outline(inner, sub_lang);
+		for item in &mut sub_items {
+			shift_entry_range(&mut item.entry.range, &block);
+			for member in &mut item.members {
+				shift_entry_range(&mut member.entry.range, &block);
+			}
+		}
+		items.extend(sub_items);
+	}
+	items
+}
+
+fn shift_entry_range(range: &mut Range, block: &SfcBlock) {
+	range.byte_offset.start += block.inner_start_byte;
+	range.byte_offset.end += block.inner_start_byte;
+	if range.start.line == 0 {
+		range.start.column += block.inner_col_offset;
+	}
+	if range.end.line == 0 {
+		range.end.column += block.inner_col_offset;
+	}
+	let line_off = block.inner_line_offset as usize;
+	range.start.line += line_off;
+	range.end.line += line_off;
 }
 
 /// Items `node` (a direct child of the file, or of a wrapper like
@@ -539,5 +582,18 @@ mod tests {
 		]);
 		assert_eq!(items[1].members.len(), 2);
 		assert_eq!(items[3].members[0].entry.symbol_type, SymbolType::Constructor);
+	}
+
+	#[test]
+	fn vue_outline_extracts_script_symbols_with_shifted_lines() {
+		let source = "<template>\n  <div />\n</template>\n\n<script setup lang=\"ts\">\ninterface Brand {\n  name: string;\n}\nconst count = 1;\nasync function save() {}\n</script>\n";
+		let items = outline(source, SupportLang::Vue);
+		assert_eq!(names(&items), [
+			(SymbolType::Interface, "Brand", false),
+			(SymbolType::Constant, "count", false),
+			(SymbolType::Function, "save", false),
+		]);
+		assert_eq!(items[0].entry.range.start.line, 5);
+		assert_eq!(items[2].entry.range.start.line, 9);
 	}
 }

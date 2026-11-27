@@ -6,7 +6,11 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Tree};
 
-use crate::{language::SupportLang, parse_cache::parse_cached};
+use crate::{
+	language::SupportLang,
+	parse_cache::parse_cached,
+	vue::{SfcTagKind, parse_sfc_blocks},
+};
 
 const DEFAULT_MIN_BODY_LINES: u32 = 4;
 const DEFAULT_MIN_COMMENT_LINES: u32 = 6;
@@ -187,19 +191,15 @@ pub fn parse_code_status(
 	lang: Option<&str>,
 	path: Option<&str>,
 ) -> Result<Option<SupportLang>> {
+	if !source.is_empty() && resolve_language(lang, path) == Some(SupportLang::Vue) {
+		return Ok((!parse_sfc_blocks(source).is_empty()).then_some(SupportLang::Vue));
+	}
 	Ok(parse_clean_source(source, lang, path)?.map(|(language, _)| language))
 }
 
 pub fn summarize_code(options: SummaryOptions) -> Result<SummaryResult> {
 	let source = options.code;
 	let total_lines = count_lines(&source);
-	let Some((language, tree)) =
-		parse_clean_source(&source, options.lang.as_deref(), options.path.as_deref())?
-	else {
-		return Ok(unparsed_result(source, total_lines));
-	};
-	let root = tree.root_node();
-
 	let min_body_lines = options
 		.min_body_lines
 		.unwrap_or(DEFAULT_MIN_BODY_LINES)
@@ -212,14 +212,146 @@ pub fn summarize_code(options: SummaryOptions) -> Result<SummaryResult> {
 	let unfold_limit = options
 		.unfold_limit_lines
 		.unwrap_or_else(|| unfold_until.saturating_mul(2));
+
+	if !source.is_empty()
+		&& resolve_language(options.lang.as_deref(), options.path.as_deref()) == Some(SupportLang::Vue)
+	{
+		return summarize_vue(
+			source,
+			total_lines,
+			min_body_lines,
+			min_comment_lines,
+			unfold_until,
+			unfold_limit,
+		);
+	}
+
+	let Some((language, tree)) =
+		parse_clean_source(&source, options.lang.as_deref(), options.path.as_deref())?
+	else {
+		return Ok(unparsed_result(source, total_lines));
+	};
+	let root = tree.root_node();
+
 	let mut forest = ElidableForest::default();
-	collect_elidable_tree(root, None, language, min_body_lines, min_comment_lines, &mut forest);
+	collect_elidable_tree(
+		root,
+		None,
+		language,
+		min_body_lines,
+		min_comment_lines,
+		0,
+		None,
+		&mut forest,
+	);
 	let spans = select_folded_spans(&forest, total_lines, unfold_until, unfold_limit);
 	let spans = normalize_spans(spans, total_lines);
 	let segments = build_segments(&source, total_lines, &spans);
 
 	Ok(SummaryResult {
 		language: Some(language.canonical_name().to_string()),
+		parsed: true,
+		elided: !spans.is_empty(),
+		total_lines,
+		segments,
+	})
+}
+
+fn summarize_vue(
+	source: String,
+	total_lines: u32,
+	min_body_lines: u32,
+	min_comment_lines: u32,
+	unfold_until: u32,
+	unfold_limit: u32,
+) -> Result<SummaryResult> {
+	let blocks = parse_sfc_blocks(&source);
+	if blocks.is_empty() {
+		return Ok(unparsed_result(source, total_lines));
+	}
+
+	let mut forest = ElidableForest::default();
+	for block in &blocks {
+		let outer_lines = block
+			.outer_end_line
+			.saturating_sub(block.outer_start_line)
+			.saturating_add(1);
+		let mut parent_idx = None;
+		let mut clamp = None;
+		if outer_lines >= min_body_lines {
+			let start = block.outer_start_line.saturating_add(1);
+			let end = block.outer_end_line.saturating_sub(1);
+			if start <= end {
+				let span = LineSpan { start, end };
+				parent_idx = Some(forest.push(None, span));
+				clamp = Some((start, end));
+			}
+		}
+
+		let inner = block.inner_source(&source);
+		if inner.trim().is_empty() {
+			continue;
+		}
+		match block.kind {
+			SfcTagKind::Script => {
+				let sub_lang = block.script_lang();
+				if let Some(tree) = parse_cached(inner, sub_lang, None)?
+					&& !tree.root_node().has_error()
+				{
+					collect_elidable_tree(
+						tree.root_node(),
+						parent_idx,
+						sub_lang,
+						min_body_lines,
+						min_comment_lines,
+						block.inner_line_offset,
+						clamp,
+						&mut forest,
+					);
+				}
+			},
+			SfcTagKind::Template => {
+				if block.template_lang() == Some(SupportLang::Html)
+					&& let Some(tree) = parse_cached(inner, SupportLang::Html, None)?
+				{
+					collect_html_elidable_tree(
+						tree.root_node(),
+						parent_idx,
+						min_body_lines,
+						min_comment_lines,
+						block.inner_line_offset,
+						clamp,
+						&mut forest,
+					);
+				}
+			},
+			SfcTagKind::Style => {
+				if let Some(sub_lang) = block.style_lang()
+					&& let Some(tree) = parse_cached(inner, sub_lang, None)?
+					&& !tree.root_node().has_error()
+				{
+					collect_elidable_tree(
+						tree.root_node(),
+						parent_idx,
+						sub_lang,
+						min_body_lines,
+						min_comment_lines,
+						block.inner_line_offset,
+						clamp,
+						&mut forest,
+					);
+				}
+			},
+			SfcTagKind::Custom => {},
+		}
+	}
+
+	let spans = select_folded_spans(&forest, total_lines, unfold_until, unfold_limit);
+	let spans = normalize_spans(spans, total_lines);
+	let segments = build_segments(&source, total_lines, &spans);
+
+	Ok(SummaryResult {
+		language: Some(SupportLang::Vue.canonical_name().to_string()),
 		parsed: true,
 		elided: !spans.is_empty(),
 		total_lines,
@@ -265,12 +397,87 @@ fn count_lines(source: &str) -> u32 {
 	}
 }
 
+fn push_mapped_span(
+	forest: &mut ElidableForest,
+	parent: Option<usize>,
+	start: u32,
+	end: u32,
+	line_offset: u32,
+	clamp_range: Option<(u32, u32)>,
+) -> Option<usize> {
+	if start > end {
+		return None;
+	}
+	let mapped_start = start.saturating_add(line_offset);
+	let mapped_end = end.saturating_add(line_offset);
+	if let Some((min_line, max_line)) = clamp_range
+		&& (mapped_start < min_line || mapped_end > max_line)
+	{
+		return None;
+	}
+	Some(forest.push(parent, LineSpan { start: mapped_start, end: mapped_end }))
+}
+
+fn collect_html_elidable_tree(
+	node: Node<'_>,
+	elidable_parent: Option<usize>,
+	min_body_lines: u32,
+	min_comment_lines: u32,
+	line_offset: u32,
+	clamp_range: Option<(u32, u32)>,
+	forest: &mut ElidableForest,
+) {
+	if node.is_error() || node.is_missing() {
+		return;
+	}
+	let total_lines = node_line_count(node);
+	if node.kind() == "comment" {
+		if total_lines >= min_comment_lines {
+			let start = node_start_line(node).saturating_add(2);
+			let end = node_content_end_line(node).saturating_sub(1);
+			push_mapped_span(forest, elidable_parent, start, end, line_offset, clamp_range);
+		}
+		return;
+	}
+
+	let mut current_parent = elidable_parent;
+	if !node.has_error()
+		&& is_elidable_kind(SupportLang::Html, node.kind())
+		&& total_lines >= min_body_lines
+	{
+		let start = node_start_line(node).saturating_add(1);
+		let end = node_content_end_line(node).saturating_sub(1);
+		if let Some(idx) =
+			push_mapped_span(forest, elidable_parent, start, end, line_offset, clamp_range)
+		{
+			current_parent = Some(idx);
+		}
+	}
+
+	let child_count = node.child_count();
+	for index in 0..child_count {
+		if let Some(child) = node.child(index) {
+			collect_html_elidable_tree(
+				child,
+				current_parent,
+				min_body_lines,
+				min_comment_lines,
+				line_offset,
+				clamp_range,
+				forest,
+			);
+		}
+	}
+}
+
 fn collect_elidable_tree(
 	node: Node<'_>,
 	elidable_parent: Option<usize>,
 	language: SupportLang,
 	min_body_lines: u32,
 	min_comment_lines: u32,
+	line_offset: u32,
+	clamp_range: Option<(u32, u32)>,
 	forest: &mut ElidableForest,
 ) {
 	let total_lines = node_line_count(node);
@@ -278,9 +485,7 @@ fn collect_elidable_tree(
 		if total_lines >= min_comment_lines {
 			let start_line = node_start_line(node) + 2;
 			let end_line = node_end_line(node).saturating_sub(1);
-			if start_line <= end_line {
-				forest.push(elidable_parent, LineSpan { start: start_line, end: end_line });
-			}
+			push_mapped_span(forest, elidable_parent, start_line, end_line, line_offset, clamp_range);
 		}
 		return;
 	}
@@ -289,12 +494,18 @@ fn collect_elidable_tree(
 	if is_elidable_kind(language, node.kind()) && total_lines >= min_body_lines {
 		let start_line = node_start_line(node) + 1;
 		let end_line = node_end_line(node).saturating_sub(1);
-		if start_line <= end_line {
+		if let Some(idx) = push_mapped_span(
+			forest,
+			elidable_parent,
+			start_line,
+			end_line,
+			line_offset,
+			clamp_range,
+		) {
 			// Unlike the legacy outermost-only collector, we DO recurse into
 			// the elided node so nested elisions are recorded as children.
 			// The BFS unfold pass decides which level actually fires.
-			current_parent =
-				Some(forest.push(elidable_parent, LineSpan { start: start_line, end: end_line }));
+			current_parent = Some(idx);
 		}
 	}
 
@@ -322,6 +533,8 @@ fn collect_elidable_tree(
 				run_last,
 				run_count,
 				min_body_lines,
+				line_offset,
+				clamp_range,
 				forest,
 				current_parent,
 			);
@@ -330,7 +543,16 @@ fn collect_elidable_tree(
 			run_count = 0;
 		}
 	}
-	flush_groupable_run(run_first, run_last, run_count, min_body_lines, forest, current_parent);
+	flush_groupable_run(
+		run_first,
+		run_last,
+		run_count,
+		min_body_lines,
+		line_offset,
+		clamp_range,
+		forest,
+		current_parent,
+	);
 
 	for index in 0..child_count {
 		if let Some(child) = node.child(index) {
@@ -340,6 +562,8 @@ fn collect_elidable_tree(
 				language,
 				min_body_lines,
 				min_comment_lines,
+				line_offset,
+				clamp_range,
 				forest,
 			);
 		}
@@ -351,6 +575,8 @@ fn flush_groupable_run(
 	last: Option<Node<'_>>,
 	count: u32,
 	min_body_lines: u32,
+	line_offset: u32,
+	clamp_range: Option<(u32, u32)>,
 	forest: &mut ElidableForest,
 	parent: Option<usize>,
 ) {
@@ -373,9 +599,7 @@ fn flush_groupable_run(
 	let first_content_end = node_content_end_line(first).min(last_start.saturating_sub(1));
 	let start = first_content_end.saturating_add(1);
 	let end = last_start.saturating_sub(1);
-	if start <= end {
-		forest.push(parent, LineSpan { start, end });
-	}
+	push_mapped_span(forest, parent, start, end, line_offset, clamp_range);
 }
 
 pub(crate) fn node_start_line(node: Node<'_>) -> u32 {
@@ -1473,5 +1697,41 @@ mod tests {
 		assert_eq!(result.segments[5].start_line, 12);
 		assert_eq!(result.segments[5].end_line, 15);
 		assert_eq!(result.segments[6].text.as_deref(), Some("}"));
+	}
+
+	#[test]
+	fn summarizes_vue_sfc_with_bfs_unfold_and_preserves_line_numbers() {
+		let body = (0..12)
+			.map(|i| format!("  const v{i} = {i};"))
+			.collect::<Vec<_>>()
+			.join("\n");
+		let rows = (0..6)
+			.map(|i| format!("    <section class=\"s{i}\">\n      <p>a {i}</p>\n      <p>b {i}</p>\n      <p>c {i}</p>\n    </section>"))
+			.collect::<Vec<_>>()
+			.join("\n");
+		let styles = (0..90)
+			.map(|i| format!(".cls{i} {{ color: #{i:06x}; }}"))
+			.collect::<Vec<_>>()
+			.join("\n");
+		let vue = format!(
+			"<script setup lang=\"ts\">\nimport a from 'a';\nimport b from 'b';\nimport c from 'c';\nimport d from 'd';\n\nfunction compute() {{\n{body}\n  return v0;\n}}\n</script>\n\n<template>\n  <div class=\"page\">\n{rows}\n  </div>\n</template>\n\n<style scoped lang=\"scss\">\n{styles}\n</style>\n"
+		);
+
+		let res = summarize_with_unfold(&vue, "Comp.vue", 15, 25);
+		assert!(res.parsed);
+		assert!(res.elided);
+		assert_eq!(res.language.as_deref(), Some("vue"));
+
+		let kept: String = res
+			.segments
+			.iter()
+			.filter(|s| s.kind == "kept")
+			.filter_map(|s| s.text.as_deref())
+			.collect::<Vec<_>>()
+			.join("\n");
+		assert!(kept.contains("<script setup lang=\"ts\">"));
+		assert!(kept.contains("function compute() {"));
+		assert!(!kept.contains("const v11 = 11;"), "function body must remain folded");
+		assert!(!kept.contains(".cls89"), "oversized scss style body must remain folded");
 	}
 }

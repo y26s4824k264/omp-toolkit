@@ -35,6 +35,17 @@ impl LspPool {
         server: &ResolvedServer,
         timeout: Duration,
     ) -> Result<Arc<LspClient>> {
+        self.get_or_start_with_bridge(server, timeout, None).await
+    }
+
+    /// Return a live persistent client for `(server, workspace_root)`, optionally attaching
+    /// a companion `ts_bridge` (e.g. `typescript-language-server` for `vue-language-server`).
+    pub async fn get_or_start_with_bridge(
+        &self,
+        server: &ResolvedServer,
+        timeout: Duration,
+        ts_bridge: Option<Arc<LspClient>>,
+    ) -> Result<Arc<LspClient>> {
         let key = PoolKey {
             server_name: server.def.name.clone(),
             workspace_root: server.workspace_root.clone(),
@@ -49,7 +60,7 @@ impl LspPool {
             }
         }
 
-        let started = LspClient::start(server.clone(), timeout).await?;
+        let started = LspClient::start_with_bridge(server.clone(), timeout, ts_bridge).await?;
         let mut guard = self.clients.lock().await;
         if let Some(existing) = guard.get(&key)
             && !existing.is_dead()

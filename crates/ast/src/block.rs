@@ -20,8 +20,10 @@ use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Point, TreeCursor};
 
 use crate::{
+	language::SupportLang,
 	parse_cache::{MAX_ENTRY_SOURCE_BYTES, parse_cached},
 	summary::{node_content_end_line, node_start_line, resolve_language},
+	vue::{block_at_line, parse_sfc_blocks},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +105,9 @@ fn resolve_block(
 	let Some(language) = resolve_language(lang, path) else {
 		return Ok(None);
 	};
+	if language == SupportLang::Vue {
+		return resolve_vue_block(code, line);
+	}
 	let row = (line - 1) as usize;
 	let Some(col) = first_content_column(code, row) else {
 		return Ok(None);
@@ -482,6 +487,9 @@ pub fn node_chain_at(options: BlockRangeOptions) -> Result<Option<Vec<NodeSpan>>
 	let Some(language) = resolve_language(lang.as_deref(), path.as_deref()) else {
 		return Ok(None);
 	};
+	if language == SupportLang::Vue {
+		return vue_node_chain_at(&code, line);
+	}
 	let row = (line - 1) as usize;
 	let Some(col) = first_content_column(&code, row) else {
 		return Ok(None);
@@ -512,6 +520,84 @@ pub fn node_chain_at(options: BlockRangeOptions) -> Result<Option<Vec<NodeSpan>>
 		}
 		node = current.parent();
 	}
+	Ok(Some(chain))
+}
+
+fn resolve_vue_block(code: &str, line: u32) -> Result<Option<(BlockRange, Range<usize>)>> {
+	let blocks = parse_sfc_blocks(code);
+	let Some(block) = block_at_line(&blocks, line) else {
+		return Ok(None);
+	};
+	if line == block.outer_start_line {
+		return Ok(Some((
+			BlockRange { start_line: block.outer_start_line, end_line: block.outer_end_line },
+			block.outer_start_byte..block.outer_end_byte,
+		)));
+	}
+	if line >= block.outer_end_line {
+		return Ok(None);
+	}
+	let Some(sub_lang) = block.content_lang() else {
+		return Ok(None);
+	};
+	let Some(local_line) = line.checked_sub(block.inner_line_offset) else {
+		return Ok(None);
+	};
+	let inner = block.inner_source(code);
+	let Some((local_range, local_bytes)) =
+		resolve_block(inner, Some(sub_lang.canonical_name()), None, local_line)?
+	else {
+		return Ok(None);
+	};
+	let start_line = local_range.start_line.saturating_add(block.inner_line_offset);
+	let end_line = local_range.end_line.saturating_add(block.inner_line_offset);
+	if start_line > end_line || end_line > block.outer_end_line {
+		return Ok(None);
+	}
+	Ok(Some((
+		BlockRange { start_line, end_line },
+		(local_bytes.start + block.inner_start_byte)..(local_bytes.end + block.inner_start_byte),
+	)))
+}
+
+fn vue_node_chain_at(code: &str, line: u32) -> Result<Option<Vec<NodeSpan>>> {
+	if line == 0 || code.is_empty() {
+		return Ok(None);
+	}
+	let blocks = parse_sfc_blocks(code);
+	let Some(block) = block_at_line(&blocks, line) else {
+		return Ok(None);
+	};
+	let row = (line - 1) as usize;
+	if first_content_column(code, row).is_none() {
+		return Ok(None);
+	}
+	let sfc_span = NodeSpan {
+		start_line: block.outer_start_line,
+		end_line:   block.outer_end_line,
+		kind:       format!("{}_element", block.tag_name),
+	};
+	if line == block.outer_start_line || line == block.outer_end_line {
+		return Ok(Some(vec![sfc_span]));
+	}
+	let Some(sub_lang) = block.content_lang() else {
+		return Ok(Some(vec![sfc_span]));
+	};
+	let Some(local_line) = line.checked_sub(block.inner_line_offset) else {
+		return Ok(Some(vec![sfc_span]));
+	};
+	let mut chain = node_chain_at(BlockRangeOptions {
+		code: block.inner_source(code).to_owned(),
+		lang: Some(sub_lang.canonical_name().to_owned()),
+		path: None,
+		line: local_line,
+	})?
+	.unwrap_or_default();
+	for span in &mut chain {
+		span.start_line = span.start_line.saturating_add(block.inner_line_offset);
+		span.end_line = span.end_line.saturating_add(block.inner_line_offset);
+	}
+	chain.push(sfc_span);
 	Ok(Some(chain))
 }
 
@@ -1574,5 +1660,24 @@ mod tests {
 		// And the raw end line (the blank one) on its own.
 		assert_eq!(boundaries(code, "x.py", &[(5, 5)]), boundaries_unpruned(code, "x.py", &[(5, 5)]));
 		assert_prune_equivalent(code, "x.py");
+	}
+
+	#[test]
+	fn resolves_vue_sfc_blocks_and_inner_ts_functions() {
+		let vue = "<script setup lang=\"ts\">\nimport { ref } from 'vue';\n\nasync function save() {\n  const ok = ref(true);\n  return ok.value;\n}\n</script>\n<template>\n  <div class=\"box\">\n    <Button @click=\"save\">Save</Button>\n  </div>\n</template>\n";
+		assert_eq!(resolve(vue, "Brand.vue", 1), Some(BlockRange { start_line: 1, end_line: 8 }));
+		assert_eq!(resolve(vue, "Brand.vue", 4), Some(BlockRange { start_line: 4, end_line: 7 }));
+		assert_eq!(resolve(vue, "Brand.vue", 10), Some(BlockRange { start_line: 10, end_line: 12 }));
+		assert_eq!(resolve(vue, "Brand.vue", 7), None);
+
+		let spans = chain(vue, "Brand.vue", 7);
+		assert!(
+			spans.iter().any(|s| s.start_line == 4 && s.end_line == 7),
+			"closing brace chain must include inner function: {spans:?}"
+		);
+		assert!(
+			spans.iter().any(|s| s.kind == "script_element" && s.start_line == 1 && s.end_line == 8),
+			"chain must include outer script_element: {spans:?}"
+		);
 	}
 }

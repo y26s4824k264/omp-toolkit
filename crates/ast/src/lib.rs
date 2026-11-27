@@ -12,5 +12,6 @@ pub mod search;
 pub mod summary;
 #[cfg(test)]
 mod testing;
+pub mod vue;
 
 pub use language::SupportLang;
