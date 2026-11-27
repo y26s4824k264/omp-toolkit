@@ -328,30 +328,43 @@ fn resolve_executable(command: &str, ancestor_dirs: &[PathBuf]) -> Option<PathBu
     if let Some(path_env) = env::var_os("PATH") {
         search_dirs.extend(env::split_paths(&path_env));
     }
+    search_dirs.extend(crate::lsp::install::managed_lsp_bin_dirs());
 
     for dir in search_dirs {
-        #[cfg(windows)]
-        {
-            for ext in ["exe", "cmd", "bat"] {
-                let with_ext = dir.join(format!("{command}.{ext}"));
-                if is_executable(&with_ext) {
-                    return Some(with_ext);
-                }
-            }
-            let candidate = dir.join(command);
-            if command.contains('.') && is_executable(&candidate) {
-                return Some(candidate);
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            let candidate = dir.join(command);
-            if is_executable(&candidate) {
-                return Some(candidate);
-            }
+        if let Some(found) = find_in_dir(&dir, command) {
+            return Some(found);
         }
     }
     None
+}
+
+/// Resolve a command on system `PATH` or inside `omp-toolkit`'s managed LSP directories.
+pub fn resolve_command(command: &str) -> Option<PathBuf> {
+    resolve_executable(command, &[])
+}
+
+/// Locate an executable named `command` inside one directory, prioritizing Windows
+/// `.exe`/`.cmd`/`.bat` shims over extensionless POSIX shell scripts.
+pub fn find_in_dir(dir: &Path, command: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        for ext in ["exe", "cmd", "bat"] {
+            let with_ext = dir.join(format!("{command}.{ext}"));
+            if is_executable(&with_ext) {
+                return Some(with_ext);
+            }
+        }
+        let candidate = dir.join(command);
+        if command.contains('.') && is_executable(&candidate) {
+            return Some(candidate);
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        let candidate = dir.join(command);
+        is_executable(&candidate).then_some(candidate)
+    }
 }
 
 fn is_executable(path: &Path) -> bool {

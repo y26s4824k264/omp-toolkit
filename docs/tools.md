@@ -104,7 +104,9 @@ Built-in catalog: **55 language servers** from Oh My Pi's `defaults.json`, overr
 | `rename_file` | `root`, `file`, `new_name`, `apply?` | Queries `workspace/willRenameFiles` to update imports/re-exports, previews diff by default, or moves file + applies edits atomically with `apply: true`. |
 | `shutdown` | `root` | Gracefully stops all warm language servers in the pool. |
 
-**CLI**: `omp-toolkit lsp status`, `omp-toolkit lsp diagnostics src/main.rs`
+**CLI**:
+- `omp-toolkit lsp status`, `omp-toolkit lsp diagnostics src/main.rs`
+- `omp-toolkit lsp-install` (auto-provisions 18 language servers into `~/.local/share/omp-toolkit/lsp` or `%LOCALAPPDATA%\OMP Toolkit\lsp`; supports `--list`, `--dry-run`, `--only ts,vue,go,rust`, `--force`)
 
 ---
 

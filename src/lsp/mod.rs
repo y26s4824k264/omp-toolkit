@@ -3,6 +3,7 @@
 pub mod client;
 pub mod config;
 pub mod edit;
+pub mod install;
 pub mod pool;
 
 use std::{
@@ -84,7 +85,9 @@ pub async fn execute(pool: &LspPool, input: LspInput) -> Result<Value> {
                 "root": root,
                 "active_connections": active,
                 "ready_for_project": available_matching,
+                "managed_lsp_dir": install::managed_lsp_root().map(|p| p.display().to_string()),
                 "total_catalog_servers": servers.len(),
+                "hint": "Run `omp-toolkit lsp-install` to auto-provision missing language servers (TypeScript, Vue, HTML/CSS/JSON/ESLint, Python, YAML, Bash, Docker, Tailwind, Svelte, Astro, GraphQL, Prisma, PHP, Go, Rust, Ruff).",
             }))
         }
         "diagnostics" => {

@@ -4,7 +4,8 @@
 
 从 [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) 重新精简抽取的**纯 Rust 单二进制**代码智能工具箱，原生支持 **Windows / macOS / Linux**（`x64` & `arm64`），一键适配 **Antigravity（反重力）**、**ChatGPT 桌面端 / Codex**、**WorkBuddy**、**CodeBuddy**、**Trae / Trae CN**、**Qoder**、**通义灵码**、**Claude Code**、**Cursor**、**VS Code / GitHub Copilot**、**Claude Desktop**、**Windsurf**、**Kiro**、**Cline**、**Roo Code**、**Zed** 及任意 stdio MCP 客户端。
 
-- **三端单二进制约 20 MB**：完整支持 macOS（`arm64`/`x64`）、Linux（`x64`/`arm64`）、Windows（`x64`/`arm64`），无需 Node.js 运行时，不打包 94 MB 嵌入式 bash，不强制预装 npm 语言服务器。
+- **三端单二进制约 20 MB**：完整支持 macOS（`arm64`/`x64`）、Linux（`x64`/`arm64`）、Windows（`x64`/`arm64`），核心引擎无需 Node.js 运行时、不打包 94 MB 嵌入式 bash。
+- **默认自动补齐最全语言服务器**：`install.sh` / `install.ps1` 与 `omp-toolkit lsp-install` 会自动把 18 套主流语言服务器（TypeScript/JS、Vue 3、HTML/CSS/JSON/ESLint、Python Pyright + Ruff、YAML、Bash、Dockerfile、Tailwind CSS、Svelte、Astro、GraphQL、Prisma、Emmet、Vim、PHP、Go `gopls`、Rust `rust-analyzer`）安装到独立托管目录并自动发现，不污染全局环境（传 `--without-lsp` 可跳过）。
 - **MCP 与 CLI 进程内直调**：零子进程 fork 套娃，零 `/tmp` 临时 patch 泄漏。
 - **对宿主 AI 零干扰、零污染**：绝不修改全局 `CLAUDE.md`、`AGENTS.md` 或 `GEMINI.md`；不抢占宿主原生 `Edit`/`Bash`；涉及代码改写与冲突解决的操作默认只读预览 unified diff（`apply: false`）。
 - **内置跨平台一键适配与卸载**：`omp-toolkit setup` 支持 17 种国内外主流客户端的自动检测、演练预览（`--dry-run`）、一键接入和无痕卸载（`--remove`）。
@@ -92,7 +93,7 @@ omp-toolkit setup --client antigravity --remove
 omp-toolkit setup --client cursor --remove
 ```
 
-语言服务器与调试适配器按需自行安装到系统 `PATH`（如 `rust-analyzer`、`typescript-language-server`、`pyright`、`gopls`、`lldb-dap`、`dlv`、`debugpy`），工具会自动探测并常驻复用。
+`install.sh` 和 `install.ps1` 默认会自动执行 `omp-toolkit lsp-install`，把上述 18 套主流语言服务器一次性补齐到独立托管目录（macOS/Linux：`~/.local/share/omp-toolkit/lsp`，Windows：`%LOCALAPPDATA%\OMP Toolkit\lsp`；原生生态 `gopls`/`rust-analyzer`/`ruff` 在检测到对应工具链时自动补齐）。如暂不需要可传 `--without-lsp` / `-WithoutLsp`，也可随时运行 `omp-toolkit lsp-install --list` 或 `--only ts,vue,go,rust` 单独查看与补齐。
 
 ---
 

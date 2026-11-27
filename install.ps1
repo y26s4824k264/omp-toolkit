@@ -18,7 +18,8 @@ param(
     [switch]$Force,
     [switch]$Remove,
     [switch]$SkipBuild,
-    [switch]$NoPathEnv
+    [switch]$NoPathEnv,
+    [switch]$WithoutLsp
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,6 +51,18 @@ if (-not $Remove) {
         New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
         Copy-Item -Force $ReleaseBin $InstalledBin
         Write-Host "Installed binary: $InstalledBin"
+    }
+
+    if (-not $WithoutLsp) {
+        $LspRunner = if (Test-Path $InstalledBin) { $InstalledBin } else { $ReleaseBin }
+        $LspArgs = @("lsp-install")
+        if ($DryRun) { $LspArgs += "--dry-run" }
+        Write-Host ""
+        Write-Host "Provisioning managed language servers (pass -WithoutLsp to skip)..."
+        & $LspRunner @LspArgs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Some language servers could not be installed; re-run `"$InstalledBin`" lsp-install later."
+        }
     }
 }
 

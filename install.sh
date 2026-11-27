@@ -12,12 +12,14 @@ force=false
 remove=false
 skip_build=false
 no_path_env=false
+without_lsp=false
 
 usage() {
     cat <<'EOF'
 Usage: ./install.sh [options]
 
-Build `omp-toolkit`, install the single binary, and optionally wire it into your AI coding software.
+Build `omp-toolkit`, install the single binary, auto-provision the managed language server suite,
+and optionally wire it into your AI coding software.
 
 Options:
   --bin-dir DIR         Install directory for `omp-toolkit` (default: ~/.local/bin)
@@ -29,6 +31,7 @@ Options:
                           cursor | vscode | claude-desktop | windsurf | zed |
                           workbuddy | codebuddy | trae | qoder | lingma |
                           kiro | cline | roo-code
+  --without-lsp         Skip automatic language server provisioning (`omp-toolkit lsp-install`)
   --dry-run             Preview setup/remove actions without modifying client configs
   --remove              Remove `omp` integration from selected `--client` target(s)
   --force               Replace an existing `omp` entry even if it points elsewhere
@@ -67,6 +70,7 @@ while [[ $# -gt 0 ]]; do
         --remove) remove=true; shift ;;
         --skip-build) skip_build=true; shift ;;
         --no-path-env) no_path_env=true; shift ;;
+        --without-lsp) without_lsp=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option: $1 (see --help)" ;;
     esac
@@ -99,6 +103,17 @@ else
         mv -f "$tmp_bin" "$bin_dir/omp-toolkit"
         installed_bin="$bin_dir/omp-toolkit"
         printf 'Installed binary: %s\n' "$installed_bin"
+    fi
+
+    if ! "$without_lsp"; then
+        lsp_runner="$installed_bin"
+        lsp_args=(lsp-install)
+        if "$dry_run"; then
+            lsp_args+=(--dry-run)
+            [[ -x "$lsp_runner" ]] || lsp_runner="$release_bin"
+        fi
+        printf '\nProvisioning managed language servers (pass --without-lsp to skip)...\n'
+        "$lsp_runner" "${lsp_args[@]}" || printf 'Warning: some language servers could not be installed; re-run `%s lsp-install` later.\n' "$installed_bin" >&2
     fi
 fi
 

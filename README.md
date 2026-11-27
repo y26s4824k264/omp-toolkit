@@ -4,7 +4,8 @@ English · [简体中文](README.zh-CN.md)
 
 A lean, single-binary Rust extraction of [Oh My Pi](https://github.com/can1357/oh-my-pi)'s highest-value code intelligence engines — natively supporting **Windows**, **macOS**, and **Linux** (`x64` & `arm64`), and plugging cleanly into **Antigravity (AGY)**, **ChatGPT Desktop / Codex**, **WorkBuddy**, **CodeBuddy**, **Trae**, **Qoder**, **Tongyi Lingma**, **Claude Code**, **Cursor**, **VS Code / GitHub Copilot**, **Claude Desktop**, **Windsurf**, **Kiro**, **Cline**, **Roo Code**, **Zed**, and any stdio MCP client.
 
-- **Cross-platform single ~20 MB binary**: macOS (`arm64`/`x64`), Linux (`x64`/`arm64`), and Windows (`x64`/`arm64`) — no Node.js runtime, no 94 MB embedded bash, no forced npm language-server installs.
+- **Cross-platform single ~20 MB binary**: macOS (`arm64`/`x64`), Linux (`x64`/`arm64`), and Windows (`x64`/`arm64`) — no Node.js runtime required for the core binary, no 94 MB embedded bash.
+- **Automatic full language-server provisioning**: `install.sh` / `install.ps1` and `omp-toolkit lsp-install` automatically provision 18 mainstream language servers (TypeScript/JS, Vue 3, HTML/CSS/JSON/ESLint, Python Pyright + Ruff, YAML, Bash, Dockerfile, Tailwind CSS, Svelte, Astro, GraphQL, Prisma, Emmet, Vim, PHP, Go `gopls`, Rust `rust-analyzer`) into an isolated managed directory (pass `--without-lsp` to skip).
 - **In-process MCP & CLI**: zero subprocess forking inside MCP, zero `/tmp` patch leaks.
 - **Non-intrusive by design**: never edits your global `CLAUDE.md`, `AGENTS.md`, or `GEMINI.md`; never competes with your agent's native `Edit` or `Bash`; structural rewrites and conflict resolutions default to dry-run unified diff preview (`apply: false`).
 - **Built-in one-click setup & rollback**: `omp-toolkit setup` configures or cleanly removes integrations across 17 supported international & Chinese AI clients.
@@ -92,7 +93,7 @@ omp-toolkit setup --client antigravity --remove
 omp-toolkit setup --client cursor --remove
 ```
 
-Install only the language servers or debug adapters you actually use on your `PATH` (e.g. `rust-analyzer`, `typescript-language-server`, `pyright`, `gopls`, `lldb-dap`, `dlv`, `debugpy`).
+`install.sh` and `install.ps1` automatically run `omp-toolkit lsp-install` to provision the full managed language server suite (TypeScript/JS, Vue, HTML/CSS/JSON/ESLint, Pyright, YAML, Bash, Dockerfile, Tailwind, Svelte, Astro, GraphQL, Prisma, Emmet, Vim, PHP, plus `gopls`/`rust-analyzer`/`ruff` whenever `go`/`rustup`/`uv` are present). Pass `--without-lsp` / `-WithoutLsp` to skip, or run `omp-toolkit lsp-install --list` / `--only ts,vue,go,rust` anytime.
 
 ---
 

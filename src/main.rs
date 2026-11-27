@@ -125,6 +125,25 @@ enum Command {
         #[arg(long)]
         timeout: Option<u64>,
     },
+    /// Auto-install and verify the managed language server suite (TypeScript, Vue, Web/ESLint,
+    /// Python/Pyright, YAML, Bash, Docker, Tailwind, Svelte, Astro, GraphQL, Prisma, PHP, Go, Rust, Ruff).
+    LspInstall {
+        /// Optional comma-separated or repeated targets (e.g. `--only ts,vue,go,rust`); omit for the full suite.
+        #[arg(long = "only")]
+        only: Vec<String>,
+        /// List installation status of all managed language servers without installing anything.
+        #[arg(long)]
+        list: bool,
+        /// Preview install actions without running package managers or modifying disk.
+        #[arg(long)]
+        dry_run: bool,
+        /// Reinstall/upgrade servers even if already found on PATH.
+        #[arg(long)]
+        force: bool,
+        /// Output machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect available DAP debug adapters (live multi-step sessions run over `omp-toolkit mcp`).
     DebugAdapters,
     /// Compress noisy CLI output from stdin or a file using OMP's command-aware minimizer.
@@ -471,6 +490,55 @@ async fn main() -> Result<()> {
             pool.shutdown_all().await;
             let val = res?;
             println!("{}", serde_json::to_string_pretty(&val)?);
+            Ok(())
+        }
+        Command::LspInstall {
+            only,
+            list,
+            dry_run,
+            force,
+            json,
+        } => {
+            if list {
+                let statuses = lsp::install::list_status(None);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&statuses)?);
+                } else {
+                    println!("{:<16} {:<10} {:<10} {}", "SERVER", "STATUS", "VIA", "LANGUAGES / BINARY");
+                    for s in statuses {
+                        let detail = s
+                            .resolved_binary
+                            .unwrap_or_else(|| format!("({})", s.languages));
+                        println!(
+                            "{:<16} {:<10} {:<10} {}",
+                            s.id,
+                            if s.available { "ready" } else { "missing" },
+                            s.installer,
+                            detail
+                        );
+                    }
+                }
+                return Ok(());
+            }
+            let summary = lsp::install::install_servers(&lsp::install::InstallOptions {
+                only,
+                dry_run,
+                force,
+                managed_dir: None,
+            })?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else {
+                println!("Managed LSP directory: {}", summary.managed_dir);
+                for step in &summary.steps {
+                    println!("[{}] {} ({})\n    {}", step.status, step.group, step.installer, step.message);
+                }
+                let ready = summary.statuses.iter().filter(|s| s.available).count();
+                println!(
+                    "\nLanguage servers ready: {ready}/{} (run `omp-toolkit lsp-install --list` for details)",
+                    summary.statuses.len()
+                );
+            }
             Ok(())
         }
         Command::DebugAdapters => {
